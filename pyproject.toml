@@ -1,0 +1,20 @@
+[project]
+name = "copilot-harness-v2"
+version = "0.1.0"
+description = "Repo-local memory-backed evidence gates for Copilot CLI workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+harness-v2 = "harness_v2.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["harness_v2"]
