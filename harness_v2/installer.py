@@ -25,10 +25,12 @@ harness-v2 evidence add requirements-summary <path>
 Before writing code, build a map of the existing codebase relevant to the change. Cover:
 
 1. Entry points, registries, and call sites the new code must plug into or satisfy.
-2. Existing implementations of the same kind (peers, siblings, prior versions). For each, record file path and one-line description.
+2. Existing implementations of the same kind (peers, siblings, prior versions).
+   - **Inspect ALL existing peers** — list every file in the peer directory (`agent/`, `platform/`, etc.) and read each one. Do not sample a subset. The peer list sets the denominator for the parity calculation in the next step.
+   - For each peer, record file path and one-line description.
 3. Interfaces and contracts the new code must implement.
    - **Start from the interface definitions file** (e.g. `core/interfaces.go` or equivalent) to enumerate ALL defined optional interfaces. Do NOT rely on reading peer code alone to discover interfaces — peers may only implement a subset.
-   - For each optional interface found in the definitions file, check which peers implement it and record that in a matrix with one column per interface. A matrix with fewer columns than the actual number of defined optional interfaces is incomplete.
+   - For each optional interface found in the definitions file, check which of the ALL peers implement it and record that in a matrix with one column per interface. A matrix with fewer columns than the actual number of defined optional interfaces is incomplete.
 4. Public types the new code consumes (events, messages, configs, sessions, permissions, etc.).
 5. Configuration surfaces: example config files, schema, env vars.
 6. Build/wiring files (plugin files, Makefile entries, build tags).
