@@ -246,6 +246,42 @@ class HarnessCoreTests(unittest.TestCase):
             result = handle_hook_event(Path(tmp), "subagentStop", {})
             self.assertEqual(result, 0)
 
+    def test_implementation_gate_denies_when_scope_freeze_invalidated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            # register context-map and scope-freeze
+            cm = Path(tmp) / "context-map.md"
+            cm.write_text("context", encoding="utf-8")
+            register_evidence(paths, "context-map", cm)
+            sf = Path(tmp) / "scope-freeze.md"
+            sf.write_text("scope v1", encoding="utf-8")
+            register_evidence(paths, "scope-freeze", sf)
+            # now re-register context-map with changed content → invalidates scope-freeze
+            cm.write_text("context updated", encoding="utf-8")
+            register_evidence(paths, "context-map", cm)
+            # scope-freeze is now invalidated — should block writes
+            decision = evaluate_implementation_gate(paths, [Path("src/app.py")])
+            self.assertEqual(decision.decision, "deny")
+            self.assertTrue(any("scope-freeze" in m for m in decision.missing))
+
+    def test_requirements_summary_invalidates_clarification_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            # register clarification-memo first
+            memo = Path(tmp) / "clarification.md"
+            memo.write_text("no questions", encoding="utf-8")
+            reg = register_evidence(paths, "clarification-memo", memo)
+            state = load_state(paths, reg.artifact_id.split(":")[0] if ":" in reg.artifact_id else _single_workflow_id(paths))
+            self.assertNotIn("clarification", state.get("invalidated", []))
+            # now re-register requirements-summary with new content → should invalidate clarification
+            req = Path(tmp) / "requirements.md"
+            req.write_text("requirements v2", encoding="utf-8")
+            register_evidence(paths, "requirements-summary", req)
+            state2 = load_state(paths, _single_workflow_id(paths))
+            self.assertIn("clarification", state2.get("invalidated", []))
+
 
 def _single_workflow_id(paths: HarnessPaths) -> str:
     """Return the single active workflow id (helper for tests that create exactly one)."""

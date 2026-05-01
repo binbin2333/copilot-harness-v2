@@ -60,7 +60,21 @@ def _handle_post_tool_use(paths: HarnessPaths, payload: dict) -> int:
 
 def _handle_user_prompt_submitted(paths: HarnessPaths, payload: dict) -> int:
     guide = paths.repo / ".github" / "harness-v2" / "AGENTS_GUIDE.md"
-    if guide.exists():
+    if not guide.exists():
+        return 0
+    try:
+        active_count = _count_active_workflows(paths)
+    except Exception:
+        active_count = 0
+    if active_count == 0:
+        print(json.dumps({
+            "systemMessage": (
+                "[harness-v2] installed in this repo. "
+                "For non-trivial tasks, run `harness-v2 start <type> '<title>'` "
+                "to begin a tracked workflow before editing files."
+            )
+        }))
+    else:
         message = (
             "[harness-v2] Before acting, read "
             f"{guide.relative_to(paths.repo)} and every SKILL.md under "
@@ -69,8 +83,22 @@ def _handle_user_prompt_submitted(paths: HarnessPaths, payload: dict) -> int:
             "task is non-trivial. For new-peer tasks, build the peer parity "
             "matrix in context-map.md before writing code."
         )
+        if active_count > 1:
+            message = (
+                "[harness-v2] Multiple active workflows detected. "
+                "Run `harness-v2 status` to list them and close or select one "
+                "before proceeding. " + message
+            )
         print(json.dumps({"systemMessage": message}))
     return 0
+
+
+def _count_active_workflows(paths: HarnessPaths) -> int:
+    if not paths.active_workflows.exists():
+        return 0
+    import json as _json
+    registry = _json.loads(paths.active_workflows.read_text(encoding="utf-8"))
+    return len(registry.get("active", []))
 
 
 def _handle_agent_stop(paths: HarnessPaths, payload: dict) -> int:

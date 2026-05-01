@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ARTIFACT_TYPES = [
+    "clarification-memo",
     "requirements-summary",
     "context-map",
     "call-chain",

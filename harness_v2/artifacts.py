@@ -11,7 +11,16 @@ from .state import HarnessPaths, append_event, load_state, now_utc, save_state, 
 
 
 INVALIDATES_BY_ARTIFACT: dict[str, list[str]] = {
+    "clarification-memo": [
+        "context-map",
+        "scope-freeze",
+        "design",
+        "implementation",
+        "verification",
+        "review",
+    ],
     "requirements-summary": [
+        "clarification",
         "context-map",
         "scope-freeze",
         "design",
@@ -31,6 +40,7 @@ INVALIDATES_BY_ARTIFACT: dict[str, list[str]] = {
 }
 
 SATISFIES_BY_ARTIFACT: dict[str, list[str]] = {
+    "clarification-memo": ["clarification"],
     "requirements-summary": ["intake"],
     "context-map": ["context-map"],
     "call-chain": ["call-chain"],

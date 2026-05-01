@@ -41,16 +41,24 @@ def evaluate_implementation_gate(
             workflow_id=selected.workflow_id,
         )
     artifacts = state.get("artifacts", {})
+    required_artifact_types = ["context-map", "scope-freeze"]
+    if _non_trivial(candidate_paths or []) and config.require_design_for_non_trivial:
+        required_artifact_types.append("design")
+    invalidated = set(state.get("invalidated", []))
+    blocking = [p for p in required_artifact_types if p in invalidated]
+    if blocking and config.strict_workflow:
+        return GateDecision(
+            gate="implementation",
+            decision="deny",
+            reason="upstream phases were invalidated by a recent change; re-register before writing code",
+            missing=[f"re-register:{p}" for p in blocking],
+            workflow_id=selected.workflow_id,
+        )
     missing = [
         artifact_type
-        for artifact_type in ("context-map", "scope-freeze")
+        for artifact_type in required_artifact_types
         if artifacts.get(artifact_type, {}).get("status") != "current"
     ]
-    if _non_trivial(candidate_paths or []) and config.require_design_for_non_trivial:
-        if artifacts.get("design", {}).get("status") != "current":
-            missing.append("design")
-    if state.get("open_questions"):
-        missing.append("resolved-open-questions")
     if state.get("unresolved_failures"):
         missing.append("memory-for-unresolved-failures")
     if missing and config.strict_workflow:

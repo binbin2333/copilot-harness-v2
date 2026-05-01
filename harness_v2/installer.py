@@ -8,6 +8,22 @@ from .config import write_default_config
 
 
 SKILLS: dict[str, str] = {
+    "clarification-memo": """# Clarification Memo
+
+Before writing any planning documents, identify ambiguities in the user's request.
+
+- List every requirement that has two or more plausible interpretations.
+- For each ambiguity, state your question and the answer you received (or the assumption you made if the user is unavailable).
+- If the requirements are unambiguous, write "No open questions — requirements are clear" and explain briefly why.
+
+The memo should be short. Its purpose is to ensure you are not building the wrong thing.
+
+Register it with:
+
+```bash
+harness-v2 evidence add clarification-memo <path>
+```
+""",
     "requirements-summary": """# Requirements Summary
 
 Produce `.github/harness-v2/state/workflows/<workflow-id>/artifacts/requirements-summary.md` covering: user request verbatim, task type (feature/bugfix/refactor), explicit constraints (allowed/forbidden paths, tools, references), unknowns, and acceptance criteria.
@@ -53,7 +69,7 @@ For "add a new peer" tasks (new agent / provider / platform / plugin), the defau
 - Required interface coverage: 100%.
 - Optional interface coverage: every interface implemented by at least half of existing peers.
 - Configuration surface: every option that the median peer exposes.
-- Wiring: registry init() call, build-tagged plugin file, Makefile/build-list update if peers do, config example block if peers have one.
+- Wiring: registry init call, build system integration if peers do it, config example block if peers have one.
 - Tests: at least the same test categories as the median peer (constructor, options parsing, all switchers, lifecycle, error paths, mocked-IO behaviors). Test LoC should be the same order of magnitude as the median peer's tests.
 
 Out-of-scope items must be listed explicitly.
@@ -63,8 +79,8 @@ Out-of-scope items must be listed explicitly.
 ```yaml
 verification:
   commands:
-    - go test ./...
-    - go build ./cmd/myapp
+    - <test command for this project>
+    - <build or compile command>
 ```
 
 Register it with:
@@ -81,7 +97,7 @@ Describe the implementation approach concretely:
 - Data flow from external dependencies / IO into internal types.
 - Mapping tables: external type/event/enum -> internal type/event/enum, one row per mapping. Mark unsupported mappings with TODO + reason. Do not silently drop fields.
 - State machines (session lifecycle, permission flow, streaming) as ordered steps.
-- Concurrency model (goroutines, channels, mutexes; what each protects).
+- Concurrency model (threads, async tasks, actors, locks — what each protects and why).
 - Error handling strategy.
 - Backwards-compatibility considerations.
 - Reuse: which existing helpers are reused vs. reimplemented.
@@ -90,7 +106,7 @@ Describe the implementation approach concretely:
 When integrating an external library or SDK:
 - Read its public type files top to bottom once before writing any code.
 - Prefer library-provided enums and helper constructors over string literals.
-- Wrap blocking library calls in a goroutine + context-aware timeout when the call may stall.
+- Wrap blocking library calls with an appropriate timeout mechanism for the language/framework when the call may stall.
 - When both a "create" and a "resume/reconnect" path exist, forward all callbacks/handlers in both; never register handlers only on the create path.
 - Stub the library in tests via narrow internal interfaces; never call real network endpoints or external binaries from unit tests.
 
@@ -105,15 +121,15 @@ harness-v2 evidence add design <path>
 Record configured commands, command outputs (final lines), failures and fixes, and final passing markers. Include:
 
 - Every command listed under `verification.commands` in `.github/harness-v2/config.yaml` (these were agreed at scope-freeze; run them all).
-- Targeted package tests for changed packages.
-- Broad test (with the project's accepted build tags) so regressions in unchanged packages are surfaced.
-- Build of any binary that uses the new code.
+- Targeted tests for changed modules/packages.
+- Broad test run so regressions in unchanged modules are surfaced.
+- Build or compile step for any binary/artifact that uses the new code.
 - Any deliberately skipped suites with rationale.
 
 Test categories to cover (adapt to the task; skip inapplicable ones):
-- Constructor / `New` defaults and option parsing (one case per option, including invalid inputs).
-- Each switchable option (model, mode, effort, workdir, provider) — read-after-write and edge cases.
-- Copy-on-set semantics for slice options (mutating caller slice must not affect stored state).
+- Constructor / factory defaults and option parsing (one case per option, including invalid inputs).
+- Each switchable option — read-after-write and edge cases.
+- Copy-on-set semantics for collection options (mutating caller collection must not affect stored state).
 - Optional interface methods: assert presence and basic behavior.
 - Session lifecycle: send happy path, error path, close/drain.
 - Event mapping: one test per row in the design-plan mapping table.
@@ -135,10 +151,10 @@ Review correctness, architecture, compatibility, test adequacy, security, mainta
 Checklist:
 - All required interfaces / contracts implemented.
 - Optional interfaces implemented where the design committed to them; gaps documented as out-of-scope with rationale.
-- All wiring steps replicated (registry init, build tags, config example, Makefile/build list).
+- All wiring steps replicated (registry init, build system integration, config example).
 - Test categories from the verification-report skill are covered; no category silently omitted.
 - No silent field drops in external-to-internal mappings (check design-plan mapping table).
-- Blocking external calls wrapped with context timeout.
+- Blocking external calls wrapped with appropriate timeout mechanism.
 - Both create and resume/reconnect paths register the same handlers.
 - No real network or binary calls in unit tests.
 
@@ -212,6 +228,10 @@ non-harness paths until evidence is in place.
 
 ## Workflow
 
+0. **Clarification memo** — before writing any planning document, identify
+   ambiguities. Ask the user if anything is unclear. Document questions and
+   answers (or "no open questions") and register with
+   `harness-v2 evidence add clarification-memo <path>`.
 1. **Requirements summary** — write the user's request, constraints, allowed
    references, forbidden references, and testable acceptance criteria. Save to
    `.../artifacts/requirements-summary.md` and register with
@@ -240,9 +260,9 @@ non-harness paths until evidence is in place.
 
 Avoid commands that block or loop unproductively:
 
-- Do not `cat` files you did not just write unless you know the size; use `head -N` / `sed -n 'a,bp'` / `wc -l`.
+- Do not `cat` files you did not just write unless you know the size; use `head -N` / line-range reads / `wc -l`.
 - Disable pagers explicitly: `git --no-pager`, `| cat`, `--no-color`.
-- Do not loop the same grep search more than three times (X, variant of X, another variant). If the third attempt fails, switch strategy: read the file's table of contents, use `go doc`, or read examples.
+- Do not loop the same grep search more than three times. If the third attempt fails, switch strategy: read the file's table of contents, use the language's documentation tool, or read examples.
 - For long-running builds/tests use `tail -N` on log files instead of streaming.
 - Prefer library enums and helpers over string literals; document unsupported fields inline rather than silently dropping.
 
