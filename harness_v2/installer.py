@@ -10,15 +10,13 @@ from .config import write_default_config
 SKILLS: dict[str, str] = {
     "harness-workflow": """---
 name: harness-workflow
-description: Use when asked to implement a feature, fix a bug, refactor code, or make any non-trivial change to source files. Activates the harness-v2 evidence-gated workflow to ensure planning, implementation, testing, and review are fully completed.
+description: Starts the harness-v2 evidence-gated workflow. Invoke this skill explicitly to begin a tracked implementation task.
 allowed-tools: shell
 ---
 
 # Harness v2 Workflow
 
-This repository has harness-v2 installed. Follow this workflow for every non-trivial implementation task.
-
-## Start the workflow
+Invoking this skill starts a harness-v2 workflow. Run the following command first:
 
 ```bash
 harness-v2 start <type> '<short title>'
@@ -26,9 +24,9 @@ harness-v2 start <type> '<short title>'
 
 `<type>` is one of: `feature`, `bugfix`, `refactor`, `chore`.
 
-## Phases (in order)
+Then proceed through the phases in order. Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide.
 
-Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide. Summary:
+## Phases
 
 0. **Clarification** — use the `/clarification-memo` skill to ask the user any ambiguous questions with `ask_user` before planning.
 1. **Requirements summary** → `harness-v2 evidence add requirements-summary <path>`
@@ -39,7 +37,7 @@ Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide. Summary:
 6. **Verification report** (run every command in `verification.commands`) → `harness-v2 evidence add verification-report <path>`
 7. **Review report** → `harness-v2 evidence add review-report <path>`
 
-## Stopping
+## Completion gate
 
 `agentStop` is blocked by the harness until:
 - `verification-report` and `review-report` are registered, and
