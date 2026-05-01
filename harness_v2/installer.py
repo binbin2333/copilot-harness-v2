@@ -313,9 +313,17 @@ def _write_hooks(repo: Path) -> list[Path]:
 
 
 def _write_skills(repo: Path) -> list[Path]:
+    skills_dir = repo / ".github" / "skills"
+    # Remove any skill directories not in the current SKILLS set so stale skills
+    # from previous harness versions don't persist alongside the new ones.
+    if skills_dir.exists():
+        import shutil
+        for existing in skills_dir.iterdir():
+            if existing.is_dir() and existing.name not in SKILLS:
+                shutil.rmtree(existing)
     written: list[Path] = []
     for name, content in SKILLS.items():
-        path = repo / ".github" / "skills" / name / "SKILL.md"
+        path = skills_dir / name / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         written.append(path)
