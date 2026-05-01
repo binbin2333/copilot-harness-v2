@@ -24,16 +24,15 @@ harness-v2 evidence add requirements-summary <path>
 
 Before writing code, build a map of the existing codebase relevant to the change. Cover:
 
-1. Entry points and registries the new code must plug into.
-2. Peer implementations of the same kind (other agents, providers, plugins, platforms, commands). For each peer, record file path and one-line description.
-3. Core interfaces the peers implement. List BOTH required and optional interfaces; for optional ones, count how many peers implement each.
-4. Public types the new code consumes (event, message, attachment, config, session, history, usage, model, provider, mode, permission, ask-user types, etc.).
+1. Entry points, registries, and call sites the new code must plug into or satisfy.
+2. Existing implementations of the same kind (peers, siblings, prior versions). For each, record file path and one-line description.
+3. Interfaces and contracts the new code must implement. List required and optional; for optional ones note which existing implementations cover them.
+4. Public types the new code consumes (events, messages, configs, sessions, permissions, etc.).
 5. Configuration surfaces: example config files, schema, env vars.
-6. Build/wiring files (cmd/<binary>/plugin_*.go, Makefile lists, build tags).
-7. Tests: existing test structure for peers including their typical test count and what they cover.
-8. Docs: README/AGENTS.md sections that mention adding a new peer.
-9. External references the user explicitly allowed (SDKs, vendor docs).
-10. Unknowns and risks.
+6. Build/wiring files (plugin files, Makefile entries, build tags).
+7. Tests: how existing siblings are tested; rough test count and categories.
+8. External references the user explicitly allowed (SDKs, vendor docs).
+9. Unknowns and risks.
 
 Register it with:
 
@@ -80,26 +79,6 @@ Register it with:
 ```bash
 harness-v2 evidence add design <path>
 ```
-""",
-    "peer-parity-checklist": """# Peer Parity Checklist
-
-Use this skill whenever the task is "add a new <thing> alongside existing <things>" (new agent, provider, platform, plugin, command). It encodes the engineering discipline of matching peer scope without copying any specific peer.
-
-Steps:
-
-1. Enumerate peers. List every directory/file group implementing the same kind. Record their public file count and total LoC.
-2. Build the interface matrix. For each peer, list every interface from `core/` (or equivalent) that it implements, including method signatures. Sum counts per interface.
-3. Build the option matrix. For each peer, extract every config option from its constructor / `New(opts ...)` / config struct. Sum per option.
-4. Build the surface matrix. Capture each peer's: registry init(), wiring file (binary plugin), Makefile inclusion, config example block, doc mention.
-5. Define the parity bar:
-   - Implement every required interface.
-   - Implement any optional interface implemented by >= 50% of peers.
-   - Expose any option present in >= 50% of peers (with sensible default if the underlying SDK lacks support; document the gap).
-   - Replicate every wiring step.
-6. Sizing target. Aim for total LoC and test LoC within 0.5x to 1.5x of the median peer.
-7. Verify against the matrix before declaring done; gaps must be either filled or recorded as out-of-scope with rationale.
-
-Save the matrix as part of `context-map.md` so reviewers can see the parity reasoning.
 """,
     "sdk-mapping-discipline": """# SDK Mapping Discipline
 
