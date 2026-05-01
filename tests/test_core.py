@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from harness_v2.artifacts import _sha256, create_evidence, register_evidence
-from harness_v2.gates import evaluate_implementation_gate
+from harness_v2.events import handle_hook_event
+from harness_v2.gates import evaluate_completion_gate, evaluate_implementation_gate
 from harness_v2.installer import install
 from harness_v2.memory import list_memory, record_memory
 from harness_v2.state import HarnessPaths, load_state, start_workflow
@@ -147,6 +148,109 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertTrue((repo / ".github" / "skills" / "context-map" / "SKILL.md").exists())
             gitignore = (repo / ".gitignore").read_text(encoding="utf-8")
             self.assertIn(".github/harness-v2/state/", gitignore)
+
+    # --- completion gate tests ---
+
+    def test_completion_gate_allows_when_no_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "allow")
+
+    def test_completion_gate_denies_missing_both_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "deny")
+            self.assertIn("verification-report", decision.missing)
+            self.assertIn("review-report", decision.missing)
+
+    def test_completion_gate_denies_missing_review_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            vr = Path(tmp) / "verification-report.md"
+            vr.write_text("tests passed", encoding="utf-8")
+            register_evidence(paths, "verification-report", vr)
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "deny")
+            self.assertNotIn("verification-report", decision.missing)
+            self.assertIn("review-report", decision.missing)
+
+    def test_completion_gate_denies_with_invalidated_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            vr = Path(tmp) / "verification-report.md"
+            vr.write_text("tests passed", encoding="utf-8")
+            register_evidence(paths, "verification-report", vr)
+            rr = Path(tmp) / "review-report.md"
+            rr.write_text("looks good", encoding="utf-8")
+            register_evidence(paths, "review-report", rr)
+            # simulate an invalidation by modifying state directly
+            wf_id = _single_workflow_id(paths)
+            state_file = paths.workflow_dir(wf_id) / "state.json"
+            state = json.loads(state_file.read_text())
+            state["invalidated"] = ["design"]
+            state_file.write_text(json.dumps(state), encoding="utf-8")
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "deny")
+            self.assertTrue(any("design" in m for m in decision.missing))
+
+    def test_completion_gate_allows_when_all_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            vr = Path(tmp) / "verification-report.md"
+            vr.write_text("tests passed", encoding="utf-8")
+            register_evidence(paths, "verification-report", vr)
+            rr = Path(tmp) / "review-report.md"
+            rr.write_text("looks good", encoding="utf-8")
+            register_evidence(paths, "review-report", rr)
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "allow")
+
+    # --- agentStop hook tests ---
+
+    def test_agent_stop_hook_blocks_without_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            result = handle_hook_event(Path(tmp), "agentStop", {})
+            self.assertEqual(result, 1)
+
+    def test_agent_stop_hook_allows_with_complete_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            vr = Path(tmp) / "verification-report.md"
+            vr.write_text("tests passed", encoding="utf-8")
+            register_evidence(paths, "verification-report", vr)
+            rr = Path(tmp) / "review-report.md"
+            rr.write_text("looks good", encoding="utf-8")
+            register_evidence(paths, "review-report", rr)
+            result = handle_hook_event(Path(tmp), "agentStop", {})
+            self.assertEqual(result, 0)
+
+    def test_agent_stop_hook_allows_when_no_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = handle_hook_event(Path(tmp), "agentStop", {})
+            self.assertEqual(result, 0)
+
+    def test_subagent_stop_hook_is_not_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            # even without evidence, subagentStop must allow
+            result = handle_hook_event(Path(tmp), "subagentStop", {})
+            self.assertEqual(result, 0)
+
+
+def _single_workflow_id(paths: HarnessPaths) -> str:
+    """Return the single active workflow id (helper for tests that create exactly one)."""
+    from harness_v2.state import select_workflow
+    return select_workflow(paths).workflow_id
 
 
 if __name__ == "__main__":

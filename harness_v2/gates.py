@@ -77,6 +77,50 @@ def evaluate_implementation_gate(
     )
 
 
+def evaluate_completion_gate(paths: HarnessPaths, workflow_id: str | None = None) -> GateDecision:
+    try:
+        selected = select_workflow(paths, workflow_id)
+    except LookupError as exc:
+        msg = str(exc)
+        if "multiple active workflows" in msg:
+            return GateDecision(
+                gate="completion",
+                decision="deny",
+                reason="multiple active workflows exist; complete or close them before stopping",
+                workflow_id=None,
+            )
+        return GateDecision(
+            gate="completion",
+            decision="allow",
+            reason="no active workflow; nothing to enforce",
+            workflow_id=None,
+        )
+    state = load_state(paths, selected.workflow_id)
+    artifacts = state.get("artifacts", {})
+    missing: list[str] = []
+    if artifacts.get("verification-report", {}).get("status") != "current":
+        missing.append("verification-report")
+    if artifacts.get("review-report", {}).get("status") != "current":
+        missing.append("review-report")
+    invalidated = state.get("invalidated", [])
+    if invalidated:
+        missing.append(f"resolved-invalidations({', '.join(invalidated)})")
+    if missing:
+        return GateDecision(
+            gate="completion",
+            decision="deny",
+            reason="task cannot complete until verification and review evidence are registered and no phases are invalidated",
+            missing=missing,
+            workflow_id=selected.workflow_id,
+        )
+    return GateDecision(
+        gate="completion",
+        decision="allow",
+        reason="all completion evidence is current",
+        workflow_id=selected.workflow_id,
+    )
+
+
 def evaluate_verification_gate(paths: HarnessPaths, workflow_id: str | None = None) -> GateDecision:
     selected = select_workflow(paths, workflow_id)
     state = load_state(paths, selected.workflow_id)

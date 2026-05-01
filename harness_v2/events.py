@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .artifacts import register_evidence
-from .gates import evaluate_implementation_gate
+from .gates import evaluate_completion_gate, evaluate_implementation_gate
 from .state import HarnessPaths, append_event
 
 
@@ -18,6 +18,8 @@ def handle_hook_event(repo: Path, event_name: str, payload: dict) -> int:
         return _handle_post_tool_use(paths, payload)
     if event_name == "userPromptSubmitted":
         return _handle_user_prompt_submitted(paths, payload)
+    if event_name == "agentStop":
+        return _handle_agent_stop(paths, payload)
     return 0
 
 
@@ -68,6 +70,17 @@ def _handle_user_prompt_submitted(paths: HarnessPaths, payload: dict) -> int:
             "matrix in context-map.md before writing code."
         )
         print(json.dumps({"systemMessage": message}))
+    return 0
+
+
+def _handle_agent_stop(paths: HarnessPaths, payload: dict) -> int:
+    decision = evaluate_completion_gate(paths)
+    if decision.decision == "deny":
+        parts = [decision.reason]
+        if decision.missing:
+            parts.append("still needed: " + ", ".join(decision.missing))
+        print(json.dumps({"decision": "block", "reason": " — ".join(parts)}))
+        return 1
     return 0
 
 

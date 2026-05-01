@@ -58,6 +58,15 @@ For "add a new peer" tasks (new agent / provider / platform / plugin), the defau
 
 Out-of-scope items must be listed explicitly.
 
+**Verification commands**: At the end of the scope-freeze document, list every shell command that constitutes acceptance. Then write those exact commands into `.github/harness-v2/config.yaml` under `verification.commands` so the harness knows the full test bar. Example fragment:
+
+```yaml
+verification:
+  commands:
+    - go test ./...
+    - go build ./cmd/myapp
+```
+
 Register it with:
 
 ```bash
@@ -95,6 +104,7 @@ harness-v2 evidence add design <path>
 
 Record configured commands, command outputs (final lines), failures and fixes, and final passing markers. Include:
 
+- Every command listed under `verification.commands` in `.github/harness-v2/config.yaml` (these were agreed at scope-freeze; run them all).
 - Targeted package tests for changed packages.
 - Broad test (with the project's accepted build tags) so regressions in unchanged packages are surfaced.
 - Build of any binary that uses the new code.
@@ -242,8 +252,14 @@ Stop only when:
 
 - `harness-v2 status` shows `"invalidated": []` and all expected artifacts are
   registered.
-- The verification report's broad test command passes.
+- The verification report covers every command listed under
+  `verification.commands` in `.github/harness-v2/config.yaml` and all pass.
 - The review report has no open significant findings.
+
+The harness enforces this at `agentStop`: it will block termination if
+`verification-report` or `review-report` is not registered, or if any
+phase is still in the `invalidated` list. You must resolve those before
+the session can end.
 
 ## What this guide intentionally does NOT contain
 
