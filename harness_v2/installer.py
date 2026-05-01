@@ -65,66 +65,27 @@ harness-v2 evidence add scope-freeze <path>
 Describe the implementation approach concretely:
 
 - File layout (paths, responsibilities).
-- Data flow from external SDK / IO into core types.
-- Mapping tables: external SDK type/event/enum -> internal core type/event/enum, one row per mapping. Mark unsupported mappings explicitly.
-- State machines (session lifecycle, permission flow, streaming dedup) as ordered steps.
+- Data flow from external dependencies / IO into internal types.
+- Mapping tables: external type/event/enum -> internal type/event/enum, one row per mapping. Mark unsupported mappings with TODO + reason. Do not silently drop fields.
+- State machines (session lifecycle, permission flow, streaming) as ordered steps.
 - Concurrency model (goroutines, channels, mutexes; what each protects).
 - Error handling strategy.
 - Backwards-compatibility considerations.
-- Reuse: which core helpers are reused vs. reimplemented.
+- Reuse: which existing helpers are reused vs. reimplemented.
 - Alternatives considered and why rejected.
+
+When integrating an external library or SDK:
+- Read its public type files top to bottom once before writing any code.
+- Prefer library-provided enums and helper constructors over string literals.
+- Wrap blocking library calls in a goroutine + context-aware timeout when the call may stall.
+- When both a "create" and a "resume/reconnect" path exist, forward all callbacks/handlers in both; never register handlers only on the create path.
+- Stub the library in tests via narrow internal interfaces; never call real network endpoints or external binaries from unit tests.
 
 Register it with:
 
 ```bash
 harness-v2 evidence add design <path>
 ```
-""",
-    "sdk-mapping-discipline": """# SDK Mapping Discipline
-
-When wrapping an external SDK:
-
-1. Read the SDK's public type files top to bottom once. Note: client constructor, session lifecycle, event union shape, request/response types, attachment types, capability/usage types, error types.
-2. Build a single mapping table in the design doc, one row per SDK type/event/enum -> internal type/event/enum. Mark unsupported fields with TODO + reason. Do not silently drop fields.
-3. Prefer SDK-provided enums and helper constructors over string literals.
-4. Wrap blocking SDK calls in a goroutine + context-aware timeout when the call may stall.
-5. Forward all SDK callbacks/handlers when both create and resume paths exist; resume must register the same handlers as create.
-6. When the SDK exposes a structured field (usage, quota, model list, skills) prefer it over parsing free text.
-7. Stub the SDK in tests via narrow internal interfaces; never call real network or CLI binaries from unit tests.
-""",
-    "interactive-shell-discipline": """# Interactive Shell Discipline
-
-Avoid commands that block or loop unproductively in agent shells:
-
-- Do not `cat` files you did not just write in the same session unless you know the size.
-- Use `head -N` / `sed -n 'a,bp'` / `wc -l` for inspection; never page interactively.
-- Disable pagers explicitly: `git --no-pager`, `| cat`, `--no-color`.
-- Use grep with `-r`, `-n`, and a `--include` glob; do not loop "search for X then variant of X then variant of X" more than three times. If the third grep does not find it, switch strategy (read the file table of contents, ask `go doc`, read examples).
-- For long-running builds/tests, use `tail -N` on log files instead of streaming.
-- Never tail/cat from `/tmp/` paths you did not create in this session.
-""",
-    "test-depth-parity": """# Test Depth Parity
-
-Tests for a new peer should match the categories and depth of existing peers:
-
-Categories that almost always apply:
-- Constructor / `New` defaults.
-- Constructor option parsing for every option (one test per option, including invalid input fall-back).
-- Each switcher (model/mode/effort/workdir/provider/ask-user-strategy) read-after-write and edge cases.
-- Provider list copy-on-set semantics (mutating caller slice must not affect agent).
-- Optional interface methods: assert presence and basic behavior.
-- Doctor info (binary name, display name).
-
-Session-level categories when relevant:
-- Send / SendMidTurn happy path.
-- Permission allow/deny mapping including unsupported result fields documented.
-- Pending permission/user-input drain on Close.
-- Event mapping for every SDK event the design covers (one test per row in the mapping table).
-- Streaming dedup / buffering when the design lists it.
-- Attachment translation for each attachment kind.
-- Usage report parsing.
-
-Test LoC should be the same order of magnitude as median peer test LoC. Use small fakes for the SDK; never depend on a real CLI binary or network.
 """,
     "verification-report": """# Verification Report
 
@@ -135,6 +96,18 @@ Record configured commands, command outputs (final lines), failures and fixes, a
 - Build of any binary that uses the new code.
 - Any deliberately skipped suites with rationale.
 
+Test categories to cover (adapt to the task; skip inapplicable ones):
+- Constructor / `New` defaults and option parsing (one case per option, including invalid inputs).
+- Each switchable option (model, mode, effort, workdir, provider) — read-after-write and edge cases.
+- Copy-on-set semantics for slice options (mutating caller slice must not affect stored state).
+- Optional interface methods: assert presence and basic behavior.
+- Session lifecycle: send happy path, error path, close/drain.
+- Event mapping: one test per row in the design-plan mapping table.
+- Permission / user-input bridge: allow and deny paths, drain on close.
+- Attachment translation for each attachment kind handled.
+
+Use small in-process fakes for external dependencies; never call real networks or CLI binaries from unit tests.
+
 Register it with:
 
 ```bash
@@ -143,7 +116,17 @@ harness-v2 evidence add verification-report <path>
 """,
     "review-lens": """# Review Lens
 
-Review correctness, architecture, compatibility, test adequacy, security, maintainability, documentation. For "new peer" reviews, additionally check the parity matrix produced under `peer-parity-checklist`: every required interface implemented, every >=50% optional interface implemented or documented as out-of-scope, every wiring step replicated, test depth matches.
+Review correctness, architecture, compatibility, test adequacy, security, maintainability, documentation.
+
+Checklist:
+- All required interfaces / contracts implemented.
+- Optional interfaces implemented where the design committed to them; gaps documented as out-of-scope with rationale.
+- All wiring steps replicated (registry init, build tags, config example, Makefile/build list).
+- Test categories from the verification-report skill are covered; no category silently omitted.
+- No silent field drops in external-to-internal mappings (check design-plan mapping table).
+- Blocking external calls wrapped with context timeout.
+- Both create and resume/reconnect paths register the same handlers.
+- No real network or binary calls in unit tests.
 
 Register synthesized findings with:
 
@@ -158,12 +141,6 @@ When the user corrects the agent or an agent-caused failure occurs, record sympt
 ```bash
 harness-v2 memory record-correction --symptom "..." --root-cause "..." --prevention "..." --key key
 ```
-
-Common prevention rules to seed memory with:
-- Prefer SDK enum constants over string literals.
-- Forward all SDK handlers in resume path, not only create path.
-- Wrap blocking SDK calls in goroutine + context timeout.
-- For new peer additions, build the peer parity matrix before writing code.
 """,
 }
 
@@ -247,12 +224,13 @@ non-harness paths until evidence is in place.
 
 ## Tool discipline
 
-- Follow `interactive-shell-discipline` skill: no interactive cats, no
-  unbounded grep loops, always disable pagers.
-- Prefer SDK enums and helpers over string literals; document any unsupported
-  fields inline rather than silently dropping.
-- For new peers, build the peer parity matrix BEFORE writing code; iterate the
-  matrix instead of iterating the code.
+Avoid commands that block or loop unproductively:
+
+- Do not `cat` files you did not just write unless you know the size; use `head -N` / `sed -n 'a,bp'` / `wc -l`.
+- Disable pagers explicitly: `git --no-pager`, `| cat`, `--no-color`.
+- Do not loop the same grep search more than three times (X, variant of X, another variant). If the third attempt fails, switch strategy: read the file's table of contents, use `go doc`, or read examples.
+- For long-running builds/tests use `tail -N` on log files instead of streaming.
+- Prefer library enums and helpers over string literals; document unsupported fields inline rather than silently dropping.
 
 ## Stopping criterion
 
