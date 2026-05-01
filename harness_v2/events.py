@@ -65,31 +65,25 @@ def _handle_user_prompt_submitted(paths: HarnessPaths, payload: dict) -> int:
     try:
         active_count = _count_active_workflows(paths)
     except Exception:
-        active_count = 0
+        return 0
     if active_count == 0:
-        print(json.dumps({
-            "systemMessage": (
-                "[harness-v2] installed in this repo. "
-                "For non-trivial tasks, run `harness-v2 start <type> '<title>'` "
-                "to begin a tracked workflow before editing files."
-            )
-        }))
-    else:
+        # No active workflow — the harness-workflow skill handles passive discovery.
+        return 0
+    message = (
+        "[harness-v2] Before acting, read "
+        f"{guide.relative_to(paths.repo)} and every SKILL.md under "
+        ".github/skills/. Implementation edits to source files are gated by "
+        "the harness; create and register evidence artifacts first when the "
+        "task is non-trivial. For new-peer tasks, build the peer parity "
+        "matrix in context-map.md before writing code."
+    )
+    if active_count > 1:
         message = (
-            "[harness-v2] Before acting, read "
-            f"{guide.relative_to(paths.repo)} and every SKILL.md under "
-            ".github/skills/. Implementation edits to source files are gated by "
-            "the harness; create and register evidence artifacts first when the "
-            "task is non-trivial. For new-peer tasks, build the peer parity "
-            "matrix in context-map.md before writing code."
+            "[harness-v2] Multiple active workflows detected. "
+            "Run `harness-v2 status` to list them and close or select one "
+            "before proceeding. " + message
         )
-        if active_count > 1:
-            message = (
-                "[harness-v2] Multiple active workflows detected. "
-                "Run `harness-v2 status` to list them and close or select one "
-                "before proceeding. " + message
-            )
-        print(json.dumps({"systemMessage": message}))
+    print(json.dumps({"systemMessage": message}))
     return 0
 
 

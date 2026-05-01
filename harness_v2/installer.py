@@ -8,15 +8,67 @@ from .config import write_default_config
 
 
 SKILLS: dict[str, str] = {
-    "clarification-memo": """# Clarification Memo
+    "harness-workflow": """---
+name: harness-workflow
+description: Use when asked to implement a feature, fix a bug, refactor code, or make any non-trivial change to source files. Activates the harness-v2 evidence-gated workflow to ensure planning, implementation, testing, and review are fully completed.
+allowed-tools: shell
+---
 
-Before writing any planning documents, identify ambiguities in the user's request.
+# Harness v2 Workflow
 
-- List every requirement that has two or more plausible interpretations.
-- For each ambiguity, state your question and the answer you received (or the assumption you made if the user is unavailable).
-- If the requirements are unambiguous, write "No open questions — requirements are clear" and explain briefly why.
+This repository has harness-v2 installed. Follow this workflow for every non-trivial implementation task.
 
-The memo should be short. Its purpose is to ensure you are not building the wrong thing.
+## Start the workflow
+
+```bash
+harness-v2 start <type> '<short title>'
+```
+
+`<type>` is one of: `feature`, `bugfix`, `refactor`, `chore`.
+
+## Phases (in order)
+
+Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide. Summary:
+
+0. **Clarification** — use the `/clarification-memo` skill to ask the user any ambiguous questions with `ask_user` before planning.
+1. **Requirements summary** → `harness-v2 evidence add requirements-summary <path>`
+2. **Context map** → `harness-v2 evidence add context-map <path>`
+3. **Scope freeze** (write `verification.commands` to `.github/harness-v2/config.yaml`) → `harness-v2 evidence add scope-freeze <path>`
+4. **Design plan** → `harness-v2 evidence add design <path>`
+5. **Implementation** — harness blocks file writes until phases 2–4 are current.
+6. **Verification report** (run every command in `verification.commands`) → `harness-v2 evidence add verification-report <path>`
+7. **Review report** → `harness-v2 evidence add review-report <path>`
+
+## Stopping
+
+`agentStop` is blocked by the harness until:
+- `verification-report` and `review-report` are registered, and
+- `harness-v2 status` shows `"invalidated": []`.
+""",
+    "clarification-memo": """---
+name: clarification-memo
+description: Use before writing any planning document when the user's request has ambiguities. Ask the user clarifying questions interactively using ask_user, then document the answers.
+---
+
+# Clarification Memo
+
+Before writing requirements or planning documents, surface and resolve ambiguities in the user's request.
+
+## Process
+
+1. Read the user's request carefully. List every requirement that has two or more plausible interpretations.
+2. For each ambiguity, call `ask_user` with a focused, single question.
+   - Ask **one question at a time** — do not bundle multiple questions.
+   - Provide **multiple-choice options** whenever there are clear alternatives (the tool adds a freeform fallback automatically).
+   - Wait for the answer before asking the next question.
+3. If the requirements are completely unambiguous, write a single line: "No open questions — requirements are clear: [brief reason]."
+
+## Output
+
+Write a short memo (no template required) covering:
+- Each question asked and the answer received.
+- Any assumption made when the user was unavailable.
+- One-sentence confirmed scope.
 
 Register it with:
 
