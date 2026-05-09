@@ -7,11 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ARTIFACT_TYPES
-from .state import HarnessPaths, append_event, load_state, now_utc, save_state, select_workflow
+from .state import HarnessPaths, append_event, load_state, now_utc, refresh_workflow_progress, save_state, select_workflow
 
 
 INVALIDATES_BY_ARTIFACT: dict[str, list[str]] = {
     "clarification-memo": [
+        "requirements-summary",
         "context-map",
         "scope-freeze",
         "design",
@@ -20,7 +21,6 @@ INVALIDATES_BY_ARTIFACT: dict[str, list[str]] = {
         "review",
     ],
     "requirements-summary": [
-        "clarification",
         "context-map",
         "scope-freeze",
         "design",
@@ -41,7 +41,7 @@ INVALIDATES_BY_ARTIFACT: dict[str, list[str]] = {
 
 SATISFIES_BY_ARTIFACT: dict[str, list[str]] = {
     "clarification-memo": ["clarification"],
-    "requirements-summary": ["intake"],
+    "requirements-summary": ["requirements-summary"],
     "context-map": ["context-map"],
     "call-chain": ["call-chain"],
     "test-map": ["test-map"],
@@ -149,6 +149,7 @@ def register_evidence(
             existing_invalidated.add(phase)
             state.setdefault("phases", {}).setdefault(phase, {})["status"] = "invalidated"
         state["invalidated"] = sorted(existing_invalidated)
+    refresh_workflow_progress(state)
     save_state(paths, state)
     append_event(
         paths,

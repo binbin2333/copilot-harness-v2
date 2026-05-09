@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import stat
 from pathlib import Path
 
@@ -25,6 +26,7 @@ harness-v2 start <type> '<short title>'
 `<type>` is one of: `feature`, `bugfix`, `refactor`, `chore`.
 
 Then proceed through the phases in order. Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide.
+`harness-v2 status` derives `current_phase` from the latest registered evidence and rewinds to the earliest downstream phase that must be redone when upstream artifacts change.
 
 ## Phases
 
@@ -39,7 +41,8 @@ Then proceed through the phases in order. Read `.github/harness-v2/AGENTS_GUIDE.
 
 ## Completion gate
 
-`agentStop` is blocked by the harness until:
+`agentStop` and `git commit` are blocked by the harness until:
+- `harness-v2 status` shows `"current_phase": "done"`,
 - `verification-report` and `review-report` are registered, and
 - `harness-v2 status` shows `"invalidated": []`.
 """,
@@ -74,7 +77,12 @@ Register it with:
 harness-v2 evidence add clarification-memo <path>
 ```
 """,
-    "requirements-summary": """# Requirements Summary
+    "requirements-summary": """---
+name: requirements-summary
+description: 'Write a requirements summary artifact for the active harness workflow. Use when starting a new task to document the user request, constraints, and testable acceptance criteria.'
+---
+
+# Requirements Summary
 
 Produce `.github/harness-v2/state/workflows/<workflow-id>/artifacts/requirements-summary.md` covering: user request verbatim, task type (feature/bugfix/refactor), explicit constraints (allowed/forbidden paths, tools, references), unknowns, and acceptance criteria.
 
@@ -86,7 +94,12 @@ Register it with:
 harness-v2 evidence add requirements-summary <path>
 ```
 """,
-    "context-map": """# Context Map
+    "context-map": """---
+name: context-map
+description: 'Build a context map of the existing codebase relevant to the current change. Use before writing code to discover entry points, peer implementations, interfaces, configs, and tests.'
+---
+
+# Context Map
 
 Before writing code, build a map of the existing codebase relevant to the change. Cover:
 
@@ -110,7 +123,12 @@ Register it with:
 harness-v2 evidence add context-map <path>
 ```
 """,
-    "scope-freeze": """# Scope Freeze
+    "scope-freeze": """---
+name: scope-freeze
+description: 'Define in/out scope, expected changed files, test strategy, and verification commands for the active harness workflow. Use after context-map and before writing code.'
+---
+
+# Scope Freeze
 
 Define in/out scope, expected changed files (concrete paths), public contracts, compatibility constraints, test strategy, rollback/migration concerns, assumptions.
 
@@ -139,7 +157,12 @@ Register it with:
 harness-v2 evidence add scope-freeze <path>
 ```
 """,
-    "design-plan": """# Design Plan
+    "design-plan": """---
+name: design-plan
+description: 'Write a design plan artifact covering file layout, data flow, mapping tables, state machines, and error handling. Use after scope-freeze and before implementation.'
+---
+
+# Design Plan
 
 Describe the implementation approach concretely:
 
@@ -166,7 +189,12 @@ Register it with:
 harness-v2 evidence add design <path>
 ```
 """,
-    "verification-report": """# Verification Report
+    "verification-report": """---
+name: verification-report
+description: 'Record verification command outputs and test results for the active harness workflow. Use after implementation to prove all acceptance criteria pass.'
+---
+
+# Verification Report
 
 Record configured commands, command outputs (final lines), failures and fixes, and final passing markers. Include:
 
@@ -194,7 +222,12 @@ Register it with:
 harness-v2 evidence add verification-report <path>
 ```
 """,
-    "review-lens": """# Review Lens
+    "review-lens": """---
+name: review-lens
+description: 'Review correctness, architecture, test adequacy, security, and maintainability of the implementation. Use after verification to produce a review-report artifact.'
+---
+
+# Review Lens
 
 Review correctness, architecture, compatibility, test adequacy, security, maintainability, documentation.
 
@@ -214,7 +247,12 @@ Register synthesized findings with:
 harness-v2 evidence add review-report <path>
 ```
 """,
-    "memory-correction": """# Memory Correction
+    "memory-correction": """---
+name: memory-correction
+description: 'Record a failure or correction memory entry when the user corrects the agent or an agent-caused failure occurs. Use to persist lessons learned for future retrieval.'
+---
+
+# Memory Correction
 
 When the user corrects the agent or an agent-caused failure occurs, record symptom, root cause, prevention rule, retrieval keys, severity, and status:
 
@@ -242,7 +280,8 @@ HOOK_SCRIPT = """#!/usr/bin/env python3
 from pathlib import Path
 import sys
 
-sys.path.insert(0, "{source_root}")
+RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "runtime"
+sys.path.insert(0, str(RUNTIME_ROOT))
 
 from harness_v2.events import hook_main
 
@@ -320,16 +359,18 @@ Avoid commands that block or loop unproductively:
 
 Stop only when:
 
+- `harness-v2 status` shows `"current_phase": "done"`.
 - `harness-v2 status` shows `"invalidated": []` and all expected artifacts are
   registered.
 - The verification report covers every command listed under
   `verification.commands` in `.github/harness-v2/config.yaml` and all pass.
 - The review report has no open significant findings.
 
-The harness enforces this at `agentStop`: it will block termination if
-`verification-report` or `review-report` is not registered, or if any
-phase is still in the `invalidated` list. You must resolve those before
-the session can end.
+The harness enforces this at `agentStop` and before `git commit`: it will block
+termination or commit if the workflow has not reached `done`, if
+`verification-report` or `review-report` is not registered, or if any phase is
+still in the `invalidated` list. You must resolve those before the session can
+end.
 
 ## What this guide intentionally does NOT contain
 
@@ -345,6 +386,7 @@ def install(repo: Path) -> list[Path]:
     repo.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     written.append(write_default_config(repo))
+    written.extend(_write_runtime(repo))
     written.extend(_ensure_runtime_dirs(repo))
     written.append(_write_hook_config(repo))
     written.extend(_write_hooks(repo))
@@ -395,10 +437,22 @@ def _write_hooks(repo: Path) -> list[Path]:
     written: list[Path] = []
     for filename, event_name in names.items():
         path = hooks_dir / filename
-        source_root = str(Path(__file__).resolve().parents[1])
-        path.write_text(HOOK_SCRIPT.format(event_name=event_name, source_root=source_root), encoding="utf-8")
+        path.write_text(HOOK_SCRIPT.format(event_name=event_name), encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         written.append(path)
+    return written
+
+
+def _write_runtime(repo: Path) -> list[Path]:
+    source_dir = Path(__file__).resolve().parent
+    runtime_dir = repo / ".github" / "harness-v2" / "runtime" / "harness_v2"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for filename in ("__init__.py", "config.py", "events.py", "gates.py", "state.py"):
+        source = source_dir / filename
+        target = runtime_dir / filename
+        shutil.copy2(source, target)
+        written.append(target)
     return written
 
 

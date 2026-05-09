@@ -10,19 +10,38 @@ from typing import Any
 
 
 PHASES = [
-    "intake",
-    "exploration",
-    "scope",
     "clarification",
+    "requirements-summary",
+    "context-map",
+    "call-chain",
+    "test-map",
+    "scope-freeze",
     "design",
+    "impact-analysis",
     "implementation",
     "verification",
     "review",
-    "rework",
-    "memory",
     "publish",
     "done",
+    "intake",
+    "exploration",
+    "scope",
+    "rework",
+    "memory",
 ]
+
+PROGRESS_PHASE_REQUIREMENTS = (
+    ("clarification", "clarification-memo", True),
+    ("requirements-summary", "requirements-summary", True),
+    ("context-map", "context-map", True),
+    ("call-chain", "call-chain", False),
+    ("test-map", "test-map", False),
+    ("scope-freeze", "scope-freeze", True),
+    ("design", "design", True),
+    ("impact-analysis", "impact-analysis", False),
+    ("implementation", "verification-report", True),
+    ("review", "review-report", True),
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +82,45 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def refresh_workflow_progress(state: dict[str, Any]) -> dict[str, Any]:
+    phases = state.setdefault("phases", {})
+    invalidated = set(state.get("invalidated", []))
+    artifacts = state.get("artifacts", {})
+    current_phase = "done"
+
+    for phase, artifact_type, required in PROGRESS_PHASE_REQUIREMENTS:
+        artifact = artifacts.get(artifact_type, {})
+        if phase in invalidated:
+            current_phase = phase
+            break
+        if required and artifact.get("status") != "current":
+            current_phase = phase
+            break
+        if not required and artifact and artifact.get("status") != "current":
+            current_phase = phase
+            break
+
+    for meta in phases.values():
+        if isinstance(meta, dict) and meta.get("status") == "active":
+            meta["status"] = "pending"
+
+    state["current_phase"] = current_phase
+    state["status"] = "complete" if current_phase == "done" else "active"
+
+    done_meta = phases.setdefault("done", {})
+    if current_phase == "done":
+        done_meta["status"] = "complete"
+    elif done_meta.get("status") == "complete":
+        done_meta["status"] = "pending"
+
+    if current_phase != "done":
+        current_meta = phases.setdefault(current_phase, {})
+        if current_meta.get("status") not in {"complete", "invalidated"}:
+            current_meta["status"] = "active"
+
+    return state
+
+
 def normalize_slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip().lower()).strip("-")
     if not slug:
@@ -92,10 +150,10 @@ def start_workflow(paths: HarnessPaths, workflow_type: str, slug: str) -> dict[s
         "workflow_id": workflow_id,
         "workflow_type": workflow_type,
         "status": "active",
-        "current_phase": "intake",
+        "current_phase": "clarification",
         "created_at": timestamp,
         "updated_at": timestamp,
-        "phases": {"intake": {"status": "active"}},
+        "phases": {},
         "artifacts": {},
         "invalidated": [],
         "open_questions": [],
@@ -103,6 +161,7 @@ def start_workflow(paths: HarnessPaths, workflow_type: str, slug: str) -> dict[s
         "verification": {},
         "review": {},
     }
+    refresh_workflow_progress(state)
     save_state(paths, state)
     registry = load_active_registry(paths)
     registry["active"].append(

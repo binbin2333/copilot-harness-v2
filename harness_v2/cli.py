@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 
 from .artifacts import create_evidence, register_evidence
-from .gates import evaluate_implementation_gate, evaluate_verification_gate
+from .gates import evaluate_completion_gate, evaluate_implementation_gate, evaluate_verification_gate
 from .installer import install
 from .memory import draft_correction, list_memory, record_memory
-from .state import HarnessPaths, load_state, select_workflow, set_phase, start_workflow
+from .state import HarnessPaths, load_state, refresh_workflow_progress, select_workflow, set_phase, start_workflow
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     gate_implementation = gate_subparsers.add_parser("implementation", help="evaluate implementation gate")
     gate_implementation.add_argument("--workflow")
     gate_implementation.add_argument("--path", action="append", default=[])
+    gate_completion = gate_subparsers.add_parser("completion", help="evaluate completion gate")
+    gate_completion.add_argument("--workflow")
     gate_verification = gate_subparsers.add_parser("verification", help="evaluate verification gate")
     gate_verification.add_argument("--workflow")
 
@@ -106,6 +108,7 @@ def _status(paths: HarnessPaths) -> int:
     try:
         selected = select_workflow(paths)
         state = load_state(paths, selected.workflow_id)
+        refresh_workflow_progress(state)
         payload = {
             "workflow_id": selected.workflow_id,
             "workflow_type": selected.workflow_type,
@@ -127,6 +130,7 @@ def _phase(paths: HarnessPaths, args: argparse.Namespace) -> int:
     else:
         selected = select_workflow(paths, args.workflow)
         state = load_state(paths, selected.workflow_id)
+        refresh_workflow_progress(state)
     print(json.dumps({"workflow_id": state["workflow_id"], "current_phase": state["current_phase"]}, indent=2))
     return 0
 
@@ -159,6 +163,8 @@ def _evidence(paths: HarnessPaths, args: argparse.Namespace) -> int:
 def _gate(paths: HarnessPaths, args: argparse.Namespace) -> int:
     if args.gate_command == "implementation":
         decision = evaluate_implementation_gate(paths, [Path(value) for value in args.path], args.workflow)
+    elif args.gate_command == "completion":
+        decision = evaluate_completion_gate(paths, args.workflow)
     elif args.gate_command == "verification":
         decision = evaluate_verification_gate(paths, args.workflow)
     else:

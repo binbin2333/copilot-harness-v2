@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 from .artifacts import register_evidence
 from .gates import evaluate_completion_gate, evaluate_implementation_gate
 from .state import HarnessPaths, append_event
+
+
+GIT_COMMIT_RE = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
 
 
 def handle_hook_event(repo: Path, event_name: str, payload: dict) -> int:
@@ -45,7 +49,13 @@ def _handle_pre_tool_use(paths: HarnessPaths, payload: dict) -> int:
     if tool_name.lower() in {"edit", "write", "multiedit", "apply_patch"}:
         decision = evaluate_implementation_gate(paths, paths_to_check)
         if decision.decision == "deny":
-            print(json.dumps({"decision": "deny", "reason": decision.reason}))
+            _emit_decision("deny", decision.reason, decision.missing)
+            return 1
+    command_text = _extract_command_text(payload)
+    if GIT_COMMIT_RE.search(command_text):
+        decision = evaluate_completion_gate(paths)
+        if decision.decision == "deny":
+            _emit_decision("deny", decision.reason, decision.missing)
             return 1
     return 0
 
@@ -98,12 +108,27 @@ def _count_active_workflows(paths: HarnessPaths) -> int:
 def _handle_agent_stop(paths: HarnessPaths, payload: dict) -> int:
     decision = evaluate_completion_gate(paths)
     if decision.decision == "deny":
-        parts = [decision.reason]
-        if decision.missing:
-            parts.append("still needed: " + ", ".join(decision.missing))
-        print(json.dumps({"decision": "block", "reason": " — ".join(parts)}))
+        _emit_decision("block", decision.reason, decision.missing)
         return 1
     return 0
+
+
+def _extract_command_text(payload: dict) -> str:
+    for candidate in (payload, payload.get("tool_args"), payload.get("toolArgs"), payload.get("arguments")):
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("command", "cmd", "input", "script"):
+            value = candidate.get(key)
+            if isinstance(value, str):
+                return value
+    return ""
+
+
+def _emit_decision(decision: str, reason: str, missing: list[str]) -> None:
+    parts = [reason]
+    if missing:
+        parts.append("still needed: " + ", ".join(missing))
+    print(json.dumps({"decision": decision, "reason": " — ".join(parts)}))
 
 
 if __name__ == "__main__":

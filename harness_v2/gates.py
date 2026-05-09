@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import SOURCE_EXTENSIONS, load_config
-from .state import HarnessPaths, load_state, select_workflow
+from .state import HarnessPaths, load_state, refresh_workflow_progress, select_workflow
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ def evaluate_implementation_gate(
 ) -> GateDecision:
     selected = select_workflow(paths, workflow_id)
     state = load_state(paths, selected.workflow_id)
+    refresh_workflow_progress(state)
     config = load_config(paths.repo)
     if _only_harness_paths(paths.repo, candidate_paths or []):
         return GateDecision(
@@ -104,6 +105,7 @@ def evaluate_completion_gate(paths: HarnessPaths, workflow_id: str | None = None
             workflow_id=None,
         )
     state = load_state(paths, selected.workflow_id)
+    refresh_workflow_progress(state)
     artifacts = state.get("artifacts", {})
     missing: list[str] = []
     if artifacts.get("verification-report", {}).get("status") != "current":
@@ -113,6 +115,8 @@ def evaluate_completion_gate(paths: HarnessPaths, workflow_id: str | None = None
     invalidated = state.get("invalidated", [])
     if invalidated:
         missing.append(f"resolved-invalidations({', '.join(invalidated)})")
+    if state.get("current_phase") != "done":
+        missing.append(f"workflow-phase({state.get('current_phase')})")
     if missing:
         return GateDecision(
             gate="completion",
@@ -132,6 +136,7 @@ def evaluate_completion_gate(paths: HarnessPaths, workflow_id: str | None = None
 def evaluate_verification_gate(paths: HarnessPaths, workflow_id: str | None = None) -> GateDecision:
     selected = select_workflow(paths, workflow_id)
     state = load_state(paths, selected.workflow_id)
+    refresh_workflow_progress(state)
     artifacts = state.get("artifacts", {})
     missing: list[str] = []
     if artifacts.get("verification-report", {}).get("status") != "current":

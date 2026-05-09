@@ -20,10 +20,33 @@ class HarnessCoreTests(unittest.TestCase):
             state = start_workflow(paths, "feature", "Auth Flow")
 
             self.assertEqual(state["workflow_id"], "feature-auth-flow")
-            self.assertEqual(state["current_phase"], "intake")
+            self.assertEqual(state["current_phase"], "clarification")
             registry = json.loads(paths.active_workflows.read_text(encoding="utf-8"))
             self.assertEqual(registry["active"][0]["workflow_id"], "feature-auth-flow")
             self.assertTrue((paths.workflow_dir("feature-auth-flow") / "events.jsonl").exists())
+
+    def test_registering_core_evidence_advances_current_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "Auth")
+
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "clarification")
+            _register_artifact(paths, "clarification-memo", "no questions")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "requirements-summary")
+            _register_artifact(paths, "requirements-summary", "requirements")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "context-map")
+            _register_artifact(paths, "context-map", "context")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "scope-freeze")
+            _register_artifact(paths, "scope-freeze", "scope")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "design")
+            _register_artifact(paths, "design", "design")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "implementation")
+            _register_artifact(paths, "verification-report", "tests passed")
+            self.assertEqual(load_state(paths, "feature-auth")["current_phase"], "review")
+            _register_artifact(paths, "review-report", "looks good")
+            final_state = load_state(paths, "feature-auth")
+            self.assertEqual(final_state["current_phase"], "done")
+            self.assertEqual(final_state["status"], "complete")
 
     def test_evidence_registration_hashes_and_invalidates_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,9 +168,15 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertIn(repo / ".github" / "hooks" / "harness-v2.json", written)
             self.assertTrue((repo / ".github" / "harness-v2" / "config.yaml").exists())
             self.assertTrue((repo / ".github" / "harness-v2" / "hooks" / "pre_tool_use.py").exists())
+            self.assertTrue((repo / ".github" / "harness-v2" / "runtime" / "harness_v2" / "events.py").exists())
             self.assertTrue((repo / ".github" / "skills" / "context-map" / "SKILL.md").exists())
+            guide = (repo / ".github" / "harness-v2" / "AGENTS_GUIDE.md").read_text(encoding="utf-8")
+            self.assertIn("git commit", guide)
             gitignore = (repo / ".gitignore").read_text(encoding="utf-8")
             self.assertIn(".github/harness-v2/state/", gitignore)
+            hook = (repo / ".github" / "harness-v2" / "hooks" / "pre_tool_use.py").read_text(encoding="utf-8")
+            self.assertIn('RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "runtime"', hook)
+            self.assertNotIn("/home/", hook)
 
     # --- completion gate tests ---
 
@@ -165,20 +194,9 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertEqual(decision.decision, "deny")
             self.assertIn("verification-report", decision.missing)
             self.assertIn("review-report", decision.missing)
+            self.assertIn("workflow-phase(clarification)", decision.missing)
 
-    def test_completion_gate_denies_missing_review_report(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = HarnessPaths(Path(tmp))
-            start_workflow(paths, "feature", "My task")
-            vr = Path(tmp) / "verification-report.md"
-            vr.write_text("tests passed", encoding="utf-8")
-            register_evidence(paths, "verification-report", vr)
-            decision = evaluate_completion_gate(paths)
-            self.assertEqual(decision.decision, "deny")
-            self.assertNotIn("verification-report", decision.missing)
-            self.assertIn("review-report", decision.missing)
-
-    def test_completion_gate_denies_with_invalidated_phases(self) -> None:
+    def test_completion_gate_denies_before_done_even_with_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = HarnessPaths(Path(tmp))
             start_workflow(paths, "feature", "My task")
@@ -188,6 +206,15 @@ class HarnessCoreTests(unittest.TestCase):
             rr = Path(tmp) / "review-report.md"
             rr.write_text("looks good", encoding="utf-8")
             register_evidence(paths, "review-report", rr)
+            decision = evaluate_completion_gate(paths)
+            self.assertEqual(decision.decision, "deny")
+            self.assertIn("workflow-phase(clarification)", decision.missing)
+
+    def test_completion_gate_denies_with_invalidated_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            _register_full_workflow(paths)
             # simulate an invalidation by modifying state directly
             wf_id = _single_workflow_id(paths)
             state_file = paths.workflow_dir(wf_id) / "state.json"
@@ -202,12 +229,7 @@ class HarnessCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = HarnessPaths(Path(tmp))
             start_workflow(paths, "feature", "My task")
-            vr = Path(tmp) / "verification-report.md"
-            vr.write_text("tests passed", encoding="utf-8")
-            register_evidence(paths, "verification-report", vr)
-            rr = Path(tmp) / "review-report.md"
-            rr.write_text("looks good", encoding="utf-8")
-            register_evidence(paths, "review-report", rr)
+            _register_full_workflow(paths)
             decision = evaluate_completion_gate(paths)
             self.assertEqual(decision.decision, "allow")
 
@@ -224,12 +246,7 @@ class HarnessCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = HarnessPaths(Path(tmp))
             start_workflow(paths, "feature", "My task")
-            vr = Path(tmp) / "verification-report.md"
-            vr.write_text("tests passed", encoding="utf-8")
-            register_evidence(paths, "verification-report", vr)
-            rr = Path(tmp) / "review-report.md"
-            rr.write_text("looks good", encoding="utf-8")
-            register_evidence(paths, "review-report", rr)
+            _register_full_workflow(paths)
             result = handle_hook_event(Path(tmp), "agentStop", {})
             self.assertEqual(result, 0)
 
@@ -265,28 +282,71 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertEqual(decision.decision, "deny")
             self.assertTrue(any("scope-freeze" in m for m in decision.missing))
 
-    def test_requirements_summary_invalidates_clarification_phase(self) -> None:
+    def test_requirements_summary_invalidates_context_not_clarification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = HarnessPaths(Path(tmp))
             start_workflow(paths, "feature", "My task")
-            # register clarification-memo first
-            memo = Path(tmp) / "clarification.md"
-            memo.write_text("no questions", encoding="utf-8")
-            reg = register_evidence(paths, "clarification-memo", memo)
-            state = load_state(paths, reg.artifact_id.split(":")[0] if ":" in reg.artifact_id else _single_workflow_id(paths))
-            self.assertNotIn("clarification", state.get("invalidated", []))
-            # now re-register requirements-summary with new content → should invalidate clarification
-            req = Path(tmp) / "requirements.md"
+            _register_artifact(paths, "clarification-memo", "no questions")
+            _register_artifact(paths, "requirements-summary", "requirements v1")
+            _register_artifact(paths, "context-map", "context v1")
+            req = Path(tmp) / "requirements-summary.md"
             req.write_text("requirements v2", encoding="utf-8")
             register_evidence(paths, "requirements-summary", req)
             state2 = load_state(paths, _single_workflow_id(paths))
-            self.assertIn("clarification", state2.get("invalidated", []))
+            self.assertNotIn("clarification", state2.get("invalidated", []))
+            self.assertIn("context-map", state2.get("invalidated", []))
+            self.assertEqual(state2["current_phase"], "context-map")
+
+    def test_clarification_change_rewinds_to_requirements_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            _register_artifact(paths, "clarification-memo", "no questions v1")
+            _register_artifact(paths, "requirements-summary", "requirements v1")
+            _register_artifact(paths, "context-map", "context v1")
+            memo = Path(tmp) / "clarification-memo.md"
+            memo.write_text("no questions v2", encoding="utf-8")
+            register_evidence(paths, "clarification-memo", memo)
+            state = load_state(paths, _single_workflow_id(paths))
+            self.assertIn("requirements-summary", state.get("invalidated", []))
+            self.assertEqual(state["current_phase"], "requirements-summary")
+
+    def test_pre_tool_use_blocks_git_commit_until_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            result = handle_hook_event(Path(tmp), "preToolUse", {"tool": "bash", "command": "git commit -m test"})
+            self.assertEqual(result, 1)
+
+    def test_pre_tool_use_allows_git_commit_when_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            start_workflow(paths, "feature", "My task")
+            _register_full_workflow(paths)
+            result = handle_hook_event(Path(tmp), "preToolUse", {"tool": "bash", "command": "git commit -m test"})
+            self.assertEqual(result, 0)
 
 
 def _single_workflow_id(paths: HarnessPaths) -> str:
     """Return the single active workflow id (helper for tests that create exactly one)."""
     from harness_v2.state import select_workflow
     return select_workflow(paths).workflow_id
+
+
+def _register_artifact(paths: HarnessPaths, artifact_type: str, content: str) -> None:
+    artifact_path = paths.repo / f"{artifact_type}.md"
+    artifact_path.write_text(content, encoding="utf-8")
+    register_evidence(paths, artifact_type, artifact_path)
+
+
+def _register_full_workflow(paths: HarnessPaths) -> None:
+    _register_artifact(paths, "clarification-memo", "no questions")
+    _register_artifact(paths, "requirements-summary", "requirements")
+    _register_artifact(paths, "context-map", "context")
+    _register_artifact(paths, "scope-freeze", "scope")
+    _register_artifact(paths, "design", "design")
+    _register_artifact(paths, "verification-report", "tests passed")
+    _register_artifact(paths, "review-report", "looks good")
 
 
 if __name__ == "__main__":

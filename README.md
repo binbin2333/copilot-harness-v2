@@ -1,23 +1,27 @@
 # copilot-harness-v2
 
-Copilot-native memory and evidence gate layer for repository-local workflows.
+`copilot-harness-v2` adds a lightweight workflow guardrail for Copilot CLI tasks inside a repository.
 
-This MVP provides:
+It provides:
 
-- a Python CLI (`harness-v2`);
-- repo-local workflow state under `.github/harness-v2/state/`;
-- evidence templates and artifact registration;
-- implementation and verification gates;
-- JSONL failure/correction memory;
-- installer-generated Copilot hook adapters and skills.
+- a CLI: `harness-v2`
+- repo-local workflow state in `.github/harness-v2/state/`
+- evidence registration for planning, verification, and review artifacts
+- implementation and completion gates
+- workflow memory stored as JSONL files
 
-## Quick start
+## Install
 
 ```bash
-uv run harness-v2 install /path/to/repo
-uv run harness-v2 --repo /path/to/repo start feature my-feature
-uv run harness-v2 --repo /path/to/repo evidence create context-map
-uv run harness-v2 --repo /path/to/repo evidence add context-map /path/to/repo/.github/harness-v2/state/workflows/feature-my-feature/artifacts/context-map.md
-uv run harness-v2 --repo /path/to/repo gate implementation
+uv sync
 ```
 
+## Basic usage
+
+```bash
+uv run harness-v2 install .
+uv run harness-v2 --repo . start feature auth-flow
+uv run harness-v2 --repo . status
+uv run harness-v2 --repo . gate implementation --path harness_v2/cli.py
+uv run harness-v2 --repo . gate completion
+```
