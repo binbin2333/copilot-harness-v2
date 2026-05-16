@@ -20,31 +20,44 @@ allowed-tools: shell
 Invoking this skill starts a harness-v2 workflow. Run the following command first:
 
 ```bash
-harness-v2 start <type> '<short title>'
+./.github/harness-v2/bin/harness-v2 start <type> '<short title>'
 ```
 
 `<type>` is one of: `feature`, `bugfix`, `refactor`, `chore`.
 
 Then proceed through the phases in order. Read `.github/harness-v2/AGENTS_GUIDE.md` for the full guide.
-`harness-v2 status` derives `current_phase` from the latest registered evidence and rewinds to the earliest downstream phase that must be redone when upstream artifacts change.
+`./.github/harness-v2/bin/harness-v2 status` derives `current_phase` from the latest registered evidence and rewinds to the earliest downstream phase that must be redone when upstream artifacts change.
+
+## v3 assumption/evidence rules
+
+Before implementation, classify the task as Level 0-3. For Level 2/3 tasks,
+planning artifacts must include `<!-- harness:v3:start -->` structured blocks
+with `A*` assumptions, `D*` decisions, `E*` evidence, `W*` waivers, and `F*`
+deferred items.
+
+In warn mode, v3 issues are reported but do not deny. In enforce mode,
+unresolved high-risk assumptions, skipped evidence without waivers, invalid
+deferred items, parse errors, and invalid review verdicts block completion.
 
 ## Phases
 
 0. **Clarification** — use the `/clarification-memo` skill to ask the user any ambiguous questions with `ask_user` before planning.
-1. **Requirements summary** → `harness-v2 evidence add requirements-summary <path>`
-2. **Context map** → `harness-v2 evidence add context-map <path>`
-3. **Scope freeze** (write `verification.commands` to `.github/harness-v2/config.yaml`) → `harness-v2 evidence add scope-freeze <path>`
-4. **Design plan** → `harness-v2 evidence add design <path>`
+    Hard rule: if the user did not explicitly say there is no ambiguity, you must ask at least one question before `clarification-memo` can be registered. If the user explicitly waives clarification, record that waiver clearly in the memo.
+1. **Requirements summary** → `./.github/harness-v2/bin/harness-v2 evidence add requirements-summary <path>`
+2. **Context map** → `./.github/harness-v2/bin/harness-v2 evidence add context-map <path>`
+3. **Scope freeze** (write `verification.commands` to `.github/harness-v2/config.yaml`) → `./.github/harness-v2/bin/harness-v2 evidence add scope-freeze <path>`
+    Hard rule: if the user did not already provide the verification plan, ask them for the exact test/build commands before writing `verification.commands`.
+4. **Design plan** → `./.github/harness-v2/bin/harness-v2 evidence add design <path>`
 5. **Implementation** — harness blocks file writes until phases 2–4 are current.
-6. **Verification report** (run every command in `verification.commands`) → `harness-v2 evidence add verification-report <path>`
-7. **Review report** → `harness-v2 evidence add review-report <path>`
+6. **Verification report** (run every command in `verification.commands`) → `./.github/harness-v2/bin/harness-v2 evidence add verification-report <path>`
+7. **Review report** → `./.github/harness-v2/bin/harness-v2 evidence add review-report <path>`
 
 ## Completion gate
 
-`agentStop` and `git commit` are blocked by the harness until:
-- `harness-v2 status` shows `"current_phase": "done"`,
+`agentStop`, `subagentStop`, and `git commit` are blocked by the harness until:
+- `./.github/harness-v2/bin/harness-v2 status` shows `"current_phase": "done"`,
 - `verification-report` and `review-report` are registered, and
-- `harness-v2 status` shows `"invalidated": []`.
+- `./.github/harness-v2/bin/harness-v2 status` shows `"invalidated": []`.
 """,
     "clarification-memo": """---
 name: clarification-memo
@@ -54,6 +67,8 @@ description: Use before writing any planning document when the user's request ha
 # Clarification Memo
 
 Before writing requirements or planning documents, surface and resolve ambiguities in the user's request.
+
+Hard rule: if the user did not explicitly say there is no ambiguity, at least one ask-user interaction must happen before this memo can be registered. If the user waived clarification, record that waiver explicitly in the memo.
 
 ## Process
 
@@ -74,7 +89,7 @@ Write a short memo (no template required) covering:
 Register it with:
 
 ```bash
-harness-v2 evidence add clarification-memo <path>
+./.github/harness-v2/bin/harness-v2 evidence add clarification-memo <path>
 ```
 """,
     "requirements-summary": """---
@@ -88,10 +103,21 @@ Produce `.github/harness-v2/state/workflows/<workflow-id>/artifacts/requirements
 
 Acceptance criteria must be testable. Avoid restating the request as the criterion. Examples of good criteria: "package X compiles under tag Y", "test Z passes", "command W returns expected JSON".
 
+Add a v3 task classification block:
+
+```markdown
+<!-- harness:v3:start -->
+task_classification:
+  level: 0 | 1 | 2 | 3
+  labels: []
+  rationale: ...
+<!-- harness:v3:end -->
+```
+
 Register it with:
 
 ```bash
-harness-v2 evidence add requirements-summary <path>
+./.github/harness-v2/bin/harness-v2 evidence add requirements-summary <path>
 ```
 """,
     "context-map": """---
@@ -117,10 +143,19 @@ Before writing code, build a map of the existing codebase relevant to the change
 8. External references the user explicitly allowed (SDKs, vendor docs).
 9. Unknowns and risks.
 
+For Level 2/3 tasks, explicitly separate:
+- already captured,
+- already stored / owned,
+- already output,
+- actual gap.
+
+Do not convert assumptions into facts. Any unresolved uncertainty must become an
+`A*` assumption in scope-freeze or design-plan.
+
 Register it with:
 
 ```bash
-harness-v2 evidence add context-map <path>
+./.github/harness-v2/bin/harness-v2 evidence add context-map <path>
 ```
 """,
     "scope-freeze": """---
@@ -142,7 +177,29 @@ For "add a new peer" tasks (new agent / provider / platform / plugin), the defau
 
 Out-of-scope items must be listed explicitly.
 
-**Verification commands**: At the end of the scope-freeze document, list every shell command that constitutes acceptance. Then write those exact commands into `.github/harness-v2/config.yaml` under `verification.commands` so the harness knows the full test bar. Example fragment:
+For Level 2/3 tasks, add a v3 assumption and decision ledger:
+
+```markdown
+<!-- harness:v3:start -->
+assumptions:
+  - id: A1
+    statement: ...
+    risk: high | medium | low
+    status: assumed
+    falsification: ...
+    evidence_required: [E1]
+    evidence: []
+    owner: agent
+decisions:
+  - id: D1
+    statement: ...
+    linked_assumptions: [A1]
+    alternatives: []
+    rationale: ...
+<!-- harness:v3:end -->
+```
+
+**Verification commands**: At the end of the scope-freeze document, list every shell command that constitutes acceptance. Then write those exact commands into `.github/harness-v2/config.yaml` under `verification.commands` so the harness knows the full test bar. If the user did not already provide this plan, ask them for the exact commands before filling this section. Example fragment:
 
 ```yaml
 verification:
@@ -154,7 +211,7 @@ verification:
 Register it with:
 
 ```bash
-harness-v2 evidence add scope-freeze <path>
+./.github/harness-v2/bin/harness-v2 evidence add scope-freeze <path>
 ```
 """,
     "design-plan": """---
@@ -176,6 +233,10 @@ Describe the implementation approach concretely:
 - Reuse: which existing helpers are reused vs. reimplemented.
 - Alternatives considered and why rejected.
 
+For Level 2/3 tasks, bind design choices to `D*` decisions and `A*`
+assumptions. If implementation planning adds a new assumption, add it in a v3
+structured block rather than hiding it in prose.
+
 When integrating an external library or SDK:
 - Read its public type files top to bottom once before writing any code.
 - Prefer library-provided enums and helper constructors over string literals.
@@ -186,7 +247,7 @@ When integrating an external library or SDK:
 Register it with:
 
 ```bash
-harness-v2 evidence add design <path>
+./.github/harness-v2/bin/harness-v2 evidence add design <path>
 ```
 """,
     "verification-report": """---
@@ -204,6 +265,20 @@ Record configured commands, command outputs (final lines), failures and fixes, a
 - Build or compile step for any binary/artifact that uses the new code.
 - Any deliberately skipped suites with rationale.
 
+For every proof, add an `E*` evidence entry. `result: skipped` requires a `W*`
+waiver or valid `F*` deferred item.
+
+```markdown
+<!-- harness:v3:start -->
+evidence:
+  - id: E1
+    type: test | build | benchmark | spec | code-trace | owner-signoff
+    supports: [A1, D1]
+    result: pass | fail | skipped
+    source: ...
+<!-- harness:v3:end -->
+```
+
 Test categories to cover (adapt to the task; skip inapplicable ones):
 - Constructor / factory defaults and option parsing (one case per option, including invalid inputs).
 - Each switchable option — read-after-write and edge cases.
@@ -219,7 +294,7 @@ Use small in-process fakes for external dependencies; never call real networks o
 Register it with:
 
 ```bash
-harness-v2 evidence add verification-report <path>
+./.github/harness-v2/bin/harness-v2 evidence add verification-report <path>
 ```
 """,
     "review-lens": """---
@@ -231,6 +306,11 @@ description: 'Review correctness, architecture, test adequacy, security, and mai
 
 Review correctness, architecture, compatibility, test adequacy, security, maintainability, documentation.
 
+Start by attacking assumptions before reviewing style or local code shape.
+Review evidence may challenge assumptions, but cannot by itself prove a
+high-risk assumption. A review `PASS` is invalid while unresolved high-risk
+assumptions remain.
+
 Checklist:
 - All required interfaces / contracts implemented.
 - Optional interfaces implemented where the design committed to them; gaps documented as out-of-scope with rationale.
@@ -241,11 +321,99 @@ Checklist:
 - Both create and resume/reconnect paths register the same handlers.
 - No real network or binary calls in unit tests.
 
+Add a review verdict block:
+
+```markdown
+<!-- harness:v3:start -->
+review:
+  verdict: PASS | PASS-WITH-GAPS | BLOCKED
+  gaps: []
+waivers:
+  - id: W1
+    covers: [A1]
+    risk: Accepted risk statement.
+    owner: human-or-team
+    exit_criteria: When this must be revisited.
+deferred_items:
+  - id: F1
+    reason: Why closure can proceed.
+    owner: human-or-team
+    exit_criteria: Concrete follow-up condition.
+<!-- harness:v3:end -->
+```
+
 Register synthesized findings with:
 
 ```bash
-harness-v2 evidence add review-report <path>
+./.github/harness-v2/bin/harness-v2 evidence add review-report <path>
 ```
+""",
+    "task-classification": """---
+name: task-classification
+description: Classify a task as Level 0-3 so harness-v2 can route lightweight vs full assumption/evidence workflow.
+---
+
+# Task Classification
+
+Use before requirements-summary for non-trivial work.
+
+Levels:
+- Level 0: trivial local note, explanation, or safe one-line edit.
+- Level 1: local implementation with no external behavior/schema/report contract change.
+- Level 2: behavior, schema, API, report, or output contract change.
+- Level 3: architecture, state ownership, performance, cross-repo, or external integration change.
+
+Write this block into requirements-summary or a task-classification artifact:
+
+```markdown
+<!-- harness:v3:start -->
+task_classification:
+  level: 0 | 1 | 2 | 3
+  labels: []
+  rationale: ...
+<!-- harness:v3:end -->
+```
+
+Level 2/3 tasks require an assumption ledger, scope freeze, and verification matrix before implementation.
+""",
+    "assumption-ledger": """---
+name: assumption-ledger
+description: Author v3 A*/D*/E*/W*/F* structured blocks for harness-v2 assumption/evidence gates.
+---
+
+# Assumption Ledger
+
+Use stable IDs:
+- `A*` assumptions
+- `D*` decisions
+- `E*` evidence
+- `W*` waivers
+- `F*` deferred items
+
+Rules:
+- High-risk `A*` assumptions need falsification plans and non-review proof.
+- Review evidence can challenge but cannot prove high-risk assumptions.
+- Skipped `E*` evidence needs a `W*` waiver or valid `F*` deferred item.
+- Deferred items require owner and exit criteria.
+
+Use the `<!-- harness:v3:start -->` / `<!-- harness:v3:end -->` block syntax documented in the relevant artifact skill.
+""",
+    "closure-check": """---
+name: closure-check
+description: Check v3 assumption/evidence closure before declaring a harness workflow done.
+---
+
+# Closure Check
+
+Before final response, review report, or commit, confirm:
+- no high-risk `A*` remains `assumed` or `challenged`;
+- every `proven` high-risk `A*` has linked non-review `E*` with `result: pass`;
+- every skipped `E*` has a valid `W*` waiver;
+- every `F*` has owner and exit criteria;
+- review verdict is not `PASS` when high-risk gaps remain;
+- `PASS-WITH-GAPS` gaps all map to `W*` or valid `F*`.
+
+Run `./.github/harness-v2/bin/harness-v2 status` and include any remaining warnings or validation gaps.
 """,
     "memory-correction": """---
 name: memory-correction
@@ -263,15 +431,23 @@ harness-v2 memory record-correction --symptom "..." --root-cause "..." --prevent
 }
 
 
+def _command_hook(script: str, timeout: int = 30) -> dict[str, object]:
+    return {"type": "command", "bash": script, "timeoutSec": timeout}
+
+
 HOOK_CONFIG = {
     "version": 1,
     "hooks": {
-        "userPromptSubmitted": ".github/harness-v2/hooks/user_prompt_submitted.py",
-        "preToolUse": ".github/harness-v2/hooks/pre_tool_use.py",
-        "postToolUse": ".github/harness-v2/hooks/post_tool_use.py",
-        "agentStop": ".github/harness-v2/hooks/agent_stop.py",
-        "subagentStop": ".github/harness-v2/hooks/subagent_stop.py",
-        "sessionEnd": ".github/harness-v2/hooks/session_end.py",
+        "sessionStart": [_command_hook(".github/harness-v2/hooks/session_start.py")],
+        "userPromptSubmitted": [_command_hook(".github/harness-v2/hooks/user_prompt_submitted.py")],
+        "permissionRequest": [_command_hook(".github/harness-v2/hooks/permission_request.py")],
+        "preToolUse": [_command_hook(".github/harness-v2/hooks/pre_tool_use.py")],
+        "postToolUse": [_command_hook(".github/harness-v2/hooks/post_tool_use.py")],
+        "postToolUseFailure": [_command_hook(".github/harness-v2/hooks/post_tool_use_failure.py")],
+        "agentStop": [_command_hook(".github/harness-v2/hooks/agent_stop.py")],
+        "subagentStop": [_command_hook(".github/harness-v2/hooks/subagent_stop.py")],
+        "errorOccurred": [_command_hook(".github/harness-v2/hooks/error_occurred.py")],
+        "sessionEnd": [_command_hook(".github/harness-v2/hooks/session_end.py")],
     },
 }
 
@@ -290,6 +466,16 @@ EVENT_NAME = "{event_name}"
 if __name__ == "__main__":
     repo = Path(__file__).resolve().parents[3]
     raise SystemExit(hook_main([str(repo), EVENT_NAME, *sys.argv[1:]]))
+"""
+
+
+CLI_WRAPPER = """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="$SCRIPT_DIR/../runtime${PYTHONPATH:+:$PYTHONPATH}"
+
+exec python3 -m harness_v2.cli "$@"
 """
 
 
@@ -312,38 +498,54 @@ non-harness paths until evidence is in place.
 1. This guide (`.github/harness-v2/AGENTS_GUIDE.md`).
 2. Every `SKILL.md` under `.github/skills/`.
 3. The active workflow state under
-   `.github/harness-v2/state/workflows/<id>/state.json` (use
-   `harness-v2 status` if uncertain).
+    `.github/harness-v2/state/workflows/<id>/state.json` (use
+    `./.github/harness-v2/bin/harness-v2 status` if uncertain).
 
 ## Workflow
 
 0. **Clarification memo** — before writing any planning document, identify
    ambiguities. Ask the user if anything is unclear. Document questions and
    answers (or "no open questions") and register with
-   `harness-v2 evidence add clarification-memo <path>`.
+    `./.github/harness-v2/bin/harness-v2 evidence add clarification-memo <path>`.
+    Hard rule: if the user did not explicitly waive clarification, at least one ask-user interaction must happen before registration.
 1. **Requirements summary** — write the user's request, constraints, allowed
    references, forbidden references, and testable acceptance criteria. Save to
    `.../artifacts/requirements-summary.md` and register with
-   `harness-v2 evidence add requirements-summary <path>`.
+    `./.github/harness-v2/bin/harness-v2 evidence add requirements-summary <path>`.
 2. **Context map** — for any task that adds a new peer to a registry-like
    codebase (new agent, provider, plugin, platform, command), follow the
    `peer-parity-checklist` skill and capture the peer matrix here. Otherwise
    capture the candidate files, callers, configs, and tests. Register with
-   `harness-v2 evidence add context-map <path>`.
+    `./.github/harness-v2/bin/harness-v2 evidence add context-map <path>`.
 3. **Scope freeze** — define in-scope, out-of-scope, expected changed files,
-   compatibility constraints, test strategy, assumptions. For new-peer tasks
-   the default parity bar from `peer-parity-checklist` applies. Register.
+    compatibility constraints, test strategy, assumptions, and write
+    `verification.commands` into `.github/harness-v2/config.yaml`. For new-peer
+    tasks the default parity bar from `peer-parity-checklist` applies. If the user did not already provide the verification plan, ask for the exact test/build commands before registration. Register.
 4. **Design plan** — file layout, mapping tables, state machines, concurrency
    model, error handling. Use `sdk-mapping-discipline` when wrapping an SDK.
    Register.
 5. **Implementation** — write code. The harness allows writes inside
    `.github/harness-v2/`, `.github/skills/`, `.github/hooks/` always; for other
-   paths the gate requires the design evidence above.
+    paths the gate requires clarification, planning evidence, and a defined
+    verification bar. Direct edits to `.github/harness-v2/state/` are forbidden.
 6. **Verification report** — record commands and final outputs. Use targeted
    tests for changed packages plus the project's accepted broad-test command.
    Register.
 7. **Review report** — review correctness, parity, tests, security,
-   maintainability. Address any findings, then register.
+    maintainability. Address any findings, then register.
+
+## v3 assumption/evidence gates
+
+For Level 2/3 tasks, planning artifacts must include structured blocks between
+`<!-- harness:v3:start -->` and `<!-- harness:v3:end -->`. Use stable IDs:
+`A*` assumptions, `D*` decisions, `E*` evidence, `W*` waivers, and `F*`
+deferred items.
+
+Gate mode is controlled by `v3.v3_gate_mode` in `.github/harness-v2/config.yaml`:
+`warn` reports issues in `harness-v2 status` and gate output without denying;
+`enforce` denies unresolved high-risk assumptions, skipped evidence without
+waivers, deferred items missing owner/exit criteria, parse errors, and invalid
+review verdicts.
 
 ## Tool discipline
 
@@ -359,18 +561,30 @@ Avoid commands that block or loop unproductively:
 
 Stop only when:
 
-- `harness-v2 status` shows `"current_phase": "done"`.
-- `harness-v2 status` shows `"invalidated": []` and all expected artifacts are
+- `./.github/harness-v2/bin/harness-v2 status` shows `"current_phase": "done"`.
+- `./.github/harness-v2/bin/harness-v2 status` shows `"invalidated": []` and all expected artifacts are
   registered.
 - The verification report covers every command listed under
   `verification.commands` in `.github/harness-v2/config.yaml` and all pass.
 - The review report has no open significant findings.
 
-The harness enforces this at `agentStop` and before `git commit`: it will block
+The harness enforces this at `agentStop`, `subagentStop`, and before `git commit`: it will block
 termination or commit if the workflow has not reached `done`, if
 `verification-report` or `review-report` is not registered, or if any phase is
 still in the `invalidated` list. You must resolve those before the session can
 end.
+
+**Exception — pause checkpoints:** If `workflow.pause_after_phases` is configured
+in `.github/harness-v2/config.yaml`, the agent is allowed to stop at those phase
+boundaries to give the user a chance to review before the next phase begins. For
+example, `pause_after_phases: [design]` allows stopping after design is registered
+so the user can read the design plan and approve it before implementation starts.
+When the session is resumed by the user, continue from the current phase.
+
+## Debugging
+
+- Run `./.github/harness-v2/bin/harness-v2 doctor` when hooks appear out of sync or the workflow looks corrupted.
+- Set `debug.fail_fast: true` in `.github/harness-v2/config.yaml` to deny and interrupt immediately when a task attempts to bypass the workflow.
 
 ## What this guide intentionally does NOT contain
 
@@ -388,6 +602,7 @@ def install(repo: Path) -> list[Path]:
     written.append(write_default_config(repo))
     written.extend(_write_runtime(repo))
     written.extend(_ensure_runtime_dirs(repo))
+    written.extend(_write_bin_scripts(repo))
     written.append(_write_hook_config(repo))
     written.extend(_write_hooks(repo))
     written.extend(_write_skills(repo))
@@ -402,6 +617,7 @@ def _ensure_runtime_dirs(repo: Path) -> list[Path]:
         repo / ".github" / "harness-v2" / "memory",
         repo / ".github" / "harness-v2" / "logs",
         repo / ".github" / "harness-v2" / "runs",
+        repo / ".github" / "harness-v2" / "bin",
     ]
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)
@@ -427,11 +643,15 @@ def _write_hooks(repo: Path) -> list[Path]:
     hooks_dir = repo / ".github" / "harness-v2" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     names = {
+        "session_start.py": "sessionStart",
         "user_prompt_submitted.py": "userPromptSubmitted",
+        "permission_request.py": "permissionRequest",
         "pre_tool_use.py": "preToolUse",
         "post_tool_use.py": "postToolUse",
+        "post_tool_use_failure.py": "postToolUseFailure",
         "agent_stop.py": "agentStop",
         "subagent_stop.py": "subagentStop",
+        "error_occurred.py": "errorOccurred",
         "session_end.py": "sessionEnd",
     }
     written: list[Path] = []
@@ -448,12 +668,33 @@ def _write_runtime(repo: Path) -> list[Path]:
     runtime_dir = repo / ".github" / "harness-v2" / "runtime" / "harness_v2"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for filename in ("__init__.py", "config.py", "events.py", "gates.py", "state.py"):
+    for filename in (
+        "__init__.py",
+        "artifacts.py",
+        "cli.py",
+        "config.py",
+        "events.py",
+        "gates.py",
+        "installer.py",
+        "memory.py",
+        "state.py",
+        "v3_parser.py",
+        "v3_schema.py",
+    ):
         source = source_dir / filename
         target = runtime_dir / filename
         shutil.copy2(source, target)
         written.append(target)
     return written
+
+
+def _write_bin_scripts(repo: Path) -> list[Path]:
+    bin_dir = repo / ".github" / "harness-v2" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / "harness-v2"
+    script.write_text(CLI_WRAPPER, encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return [script]
 
 
 def _write_skills(repo: Path) -> list[Path]:

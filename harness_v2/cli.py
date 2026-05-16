@@ -7,9 +7,10 @@ from pathlib import Path
 
 from .artifacts import create_evidence, register_evidence
 from .gates import evaluate_completion_gate, evaluate_implementation_gate, evaluate_verification_gate
+from .config import load_config
 from .installer import install
 from .memory import draft_correction, list_memory, record_memory
-from .state import HarnessPaths, load_state, refresh_workflow_progress, select_workflow, set_phase, start_workflow
+from .state import HarnessPaths, inspect_workflow, load_state, refresh_workflow_progress, select_workflow, set_phase, start_workflow
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser.add_argument("repo_path")
 
     subparsers.add_parser("status", help="show active workflow status")
+
+    doctor_parser = subparsers.add_parser("doctor", help="inspect runtime installation and workflow integrity")
+    doctor_parser.add_argument("--workflow")
 
     start_parser = subparsers.add_parser("start", help="start a workflow")
     start_parser.add_argument("workflow_type")
@@ -86,6 +90,8 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "status":
         return _status(paths)
+    if args.command == "doctor":
+        return _doctor(paths, args)
     if args.command == "start":
         state = start_workflow(paths, args.workflow_type, args.slug)
         print(json.dumps(state, indent=2, sort_keys=True))
@@ -109,6 +115,7 @@ def _status(paths: HarnessPaths) -> int:
         selected = select_workflow(paths)
         state = load_state(paths, selected.workflow_id)
         refresh_workflow_progress(state)
+        config = load_config(paths.repo)
         payload = {
             "workflow_id": selected.workflow_id,
             "workflow_type": selected.workflow_type,
@@ -117,7 +124,22 @@ def _status(paths: HarnessPaths) -> int:
             "current_phase": state.get("current_phase"),
             "invalidated": state.get("invalidated", []),
             "artifacts": sorted(state.get("artifacts", {}).keys()),
+            "v3_gate_mode": config.v3_gate_mode,
+            "task_classification": state.get("task_classification", {}),
+            "unresolved_high_risk_assumptions": [
+                item.get("id")
+                for item in state.get("assumptions", [])
+                if item.get("risk") == "high" and item.get("status") not in {"proven", "rejected", "accepted-risk", "deferred"}
+            ],
+            "skipped_evidence": [
+                item.get("id") for item in state.get("evidence_items", []) if item.get("result") == "skipped"
+            ],
+            "waivers": [item.get("id") for item in state.get("waivers", [])],
+            "deferred_items": [item.get("id") for item in state.get("deferred_items", [])],
+            "review_verdict": state.get("review", {}).get("verdict"),
+            "v3_parse_errors": state.get("v3_parse_errors", []),
         }
+        payload["completion_gate"] = evaluate_completion_gate(paths, selected.workflow_id).as_dict()
     except LookupError:
         payload = {"active": []}
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -133,6 +155,12 @@ def _phase(paths: HarnessPaths, args: argparse.Namespace) -> int:
         refresh_workflow_progress(state)
     print(json.dumps({"workflow_id": state["workflow_id"], "current_phase": state["current_phase"]}, indent=2))
     return 0
+
+
+def _doctor(paths: HarnessPaths, args: argparse.Namespace) -> int:
+    report = inspect_workflow(paths, args.workflow)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report.get("ok") else 1
 
 
 def _evidence(paths: HarnessPaths, args: argparse.Namespace) -> int:
