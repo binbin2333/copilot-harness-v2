@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 
 ARTIFACT_TYPES = [
@@ -68,11 +71,11 @@ workflow:
     # allowed mid-workflow.
     pause_after_phases: []
 v3:
-    enable_v3_gates: false
-    v3_gate_mode: warn
-    require_assumption_resolution: false
-    require_skip_waivers: false
-    require_task_classification: false
+    enable_v3_gates: true
+    v3_gate_mode: enforce
+    require_assumption_resolution: true
+    require_skip_waivers: true
+    require_task_classification: true
     allow_pass_with_gaps: false
 """
 
@@ -88,11 +91,11 @@ class HarnessConfig:
     fail_fast: bool = False
     verification_commands: tuple[str, ...] = ()
     pause_after_phases: tuple[str, ...] = ()
-    enable_v3_gates: bool = False
-    v3_gate_mode: str = "warn"
-    require_assumption_resolution: bool = False
-    require_skip_waivers: bool = False
-    require_task_classification: bool = False
+    enable_v3_gates: bool = True
+    v3_gate_mode: str = "enforce"
+    require_assumption_resolution: bool = True
+    require_skip_waivers: bool = True
+    require_task_classification: bool = True
     allow_pass_with_gaps: bool = False
 
 
@@ -101,25 +104,33 @@ def load_config(repo: Path) -> HarnessConfig:
     if not path.exists():
         return HarnessConfig()
     text = path.read_text(encoding="utf-8")
-    v3_gate_mode = _read_string(text, "v3_gate_mode", "warn")
+    data = _load_yaml_mapping(text, path)
+    gates = _read_section(data, "gates", path)
+    automation = _read_section(data, "automation", path)
+    debug = _read_section(data, "debug", path)
+    verification = _read_section(data, "verification", path)
+    workflow = _read_section(data, "workflow", path)
+    v3 = _read_section(data, "v3", path)
+
+    v3_gate_mode = _read_string(v3, "v3_gate_mode", "enforce", path, "v3")
     if v3_gate_mode not in {"warn", "enforce"}:
         raise ValueError(f"invalid v3_gate_mode: {v3_gate_mode}. Must be 'warn' or 'enforce'.")
     return HarnessConfig(
-        strict_workflow=_read_bool(text, "strict_workflow", True),
-        require_design_for_non_trivial=_read_bool(text, "require_design_for_non_trivial", True),
-        require_clarification=_read_bool(text, "require_clarification", True),
-        protect_state_files=_read_bool(text, "protect_state_files", True),
-        require_verification_commands=_read_bool(text, "require_verification_commands", True),
-        auto_register_artifacts=_read_bool(text, "auto_register_artifacts", True),
-        fail_fast=_read_bool(text, "fail_fast", False),
-        verification_commands=tuple(_read_string_list(text, "commands")),
-        pause_after_phases=tuple(_read_string_list(text, "pause_after_phases")),
-        enable_v3_gates=_read_bool(text, "enable_v3_gates", False),
+        strict_workflow=_read_bool(gates, "strict_workflow", True, path, "gates"),
+        require_design_for_non_trivial=_read_bool(gates, "require_design_for_non_trivial", True, path, "gates"),
+        require_clarification=_read_bool(gates, "require_clarification", True, path, "gates"),
+        protect_state_files=_read_bool(gates, "protect_state_files", True, path, "gates"),
+        require_verification_commands=_read_bool(gates, "require_verification_commands", True, path, "gates"),
+        auto_register_artifacts=_read_bool(automation, "auto_register_artifacts", True, path, "automation"),
+        fail_fast=_read_bool(debug, "fail_fast", False, path, "debug"),
+        verification_commands=tuple(_read_string_list(verification, "commands", path, "verification")),
+        pause_after_phases=tuple(_read_string_list(workflow, "pause_after_phases", path, "workflow")),
+        enable_v3_gates=_read_bool(v3, "enable_v3_gates", True, path, "v3"),
         v3_gate_mode=v3_gate_mode,
-        require_assumption_resolution=_read_bool(text, "require_assumption_resolution", False),
-        require_skip_waivers=_read_bool(text, "require_skip_waivers", False),
-        require_task_classification=_read_bool(text, "require_task_classification", False),
-        allow_pass_with_gaps=_read_bool(text, "allow_pass_with_gaps", False),
+        require_assumption_resolution=_read_bool(v3, "require_assumption_resolution", True, path, "v3"),
+        require_skip_waivers=_read_bool(v3, "require_skip_waivers", True, path, "v3"),
+        require_task_classification=_read_bool(v3, "require_task_classification", True, path, "v3"),
+        allow_pass_with_gaps=_read_bool(v3, "allow_pass_with_gaps", False, path, "v3"),
     )
 
 
@@ -136,88 +147,85 @@ def write_default_config(repo: Path, overwrite: bool = False) -> Path:
 
 
 def _render_config(config: HarnessConfig) -> str:
-    lines = [
-        "version: 1",
-        "gates:",
-        f"  strict_workflow: {_format_bool(config.strict_workflow)}",
-        f"  require_design_for_non_trivial: {_format_bool(config.require_design_for_non_trivial)}",
-        f"  require_clarification: {_format_bool(config.require_clarification)}",
-        f"  protect_state_files: {_format_bool(config.protect_state_files)}",
-        f"  require_verification_commands: {_format_bool(config.require_verification_commands)}",
-        "automation:",
-        f"  auto_register_artifacts: {_format_bool(config.auto_register_artifacts)}",
-        "debug:",
-        f"  fail_fast: {_format_bool(config.fail_fast)}",
-        "verification:",
-    ]
-    if config.verification_commands:
-        lines.append("  commands:")
-        for command in config.verification_commands:
-            lines.append(f"    - {command}")
-    else:
-        lines.append("  commands: []")
-    lines.append("workflow:")
-    if config.pause_after_phases:
-        lines.append("  pause_after_phases:")
-        for phase in config.pause_after_phases:
-            lines.append(f"    - {phase}")
-    else:
-        lines.append("  pause_after_phases: []")
-    lines.extend(
-        [
-            "v3:",
-            f"  enable_v3_gates: {_format_bool(config.enable_v3_gates)}",
-            f"  v3_gate_mode: {config.v3_gate_mode}",
-            f"  require_assumption_resolution: {_format_bool(config.require_assumption_resolution)}",
-            f"  require_skip_waivers: {_format_bool(config.require_skip_waivers)}",
-            f"  require_task_classification: {_format_bool(config.require_task_classification)}",
-            f"  allow_pass_with_gaps: {_format_bool(config.allow_pass_with_gaps)}",
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    payload = {
+        "version": 1,
+        "gates": {
+            "strict_workflow": config.strict_workflow,
+            "require_design_for_non_trivial": config.require_design_for_non_trivial,
+            "require_clarification": config.require_clarification,
+            "protect_state_files": config.protect_state_files,
+            "require_verification_commands": config.require_verification_commands,
+        },
+        "automation": {"auto_register_artifacts": config.auto_register_artifacts},
+        "debug": {"fail_fast": config.fail_fast},
+        "verification": {"commands": list(config.verification_commands)},
+        "workflow": {"pause_after_phases": list(config.pause_after_phases)},
+        "v3": {
+            "enable_v3_gates": config.enable_v3_gates,
+            "v3_gate_mode": config.v3_gate_mode,
+            "require_assumption_resolution": config.require_assumption_resolution,
+            "require_skip_waivers": config.require_skip_waivers,
+            "require_task_classification": config.require_task_classification,
+            "allow_pass_with_gaps": config.allow_pass_with_gaps,
+        },
+    }
+    return yaml.safe_dump(payload, sort_keys=False)
 
 
-def _format_bool(value: bool) -> str:
-    return "true" if value else "false"
+def _load_yaml_mapping(text: str, path: Path) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(text) if text.strip() else {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML in {path}: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"config root in {path} must be a mapping")
+    return data
 
 
-def _read_bool(text: str, key: str, default: bool) -> bool:
-    prefix = f"{key}:"
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line.startswith(prefix):
-            value = line[len(prefix) :].strip().lower()
-            if value in {"true", "yes", "1"}:
-                return True
-            if value in {"false", "no", "0"}:
-                return False
-            raise ValueError(f"invalid boolean for {key}: {value}")
-    return default
+def _read_section(data: dict[str, Any], key: str, path: Path) -> dict[str, Any]:
+    value = data.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"config section '{key}' in {path} must be a mapping")
+    return value
 
 
-def _read_string_list(text: str, key: str) -> list[str]:
-    lines = text.splitlines()
-    for index, raw_line in enumerate(lines):
-        line = raw_line.strip()
-        if line == f"{key}: []":
-            return []
-        if line == f"{key}:":
-            result: list[str] = []
-            for child in lines[index + 1 :]:
-                stripped = child.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if not stripped.startswith("- "):
-                    break
-                result.append(stripped[2:].strip().strip('"').strip("'"))
-            return result
-    return []
+def _read_bool(section: dict[str, Any], key: str, default: bool, path: Path, section_name: str) -> bool:
+    if key not in section or section[key] is None:
+        return default
+    value = section[key]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0"}:
+            return False
+    raise ValueError(f"config key '{section_name}.{key}' in {path} must be a boolean")
 
 
-def _read_string(text: str, key: str, default: str) -> str:
-    prefix = f"{key}:"
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line.startswith(prefix):
-            return line[len(prefix) :].strip().strip('"').strip("'")
-    return default
+def _read_string_list(section: dict[str, Any], key: str, path: Path, section_name: str) -> list[str]:
+    if key not in section or section[key] is None:
+        return []
+    value = section[key]
+    if not isinstance(value, list):
+        raise ValueError(f"config key '{section_name}.{key}' in {path} must be a list of strings")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"config key '{section_name}.{key}[{index}]' in {path} must be a string")
+        result.append(item)
+    return result
+
+
+def _read_string(section: dict[str, Any], key: str, default: str, path: Path, section_name: str) -> str:
+    if key not in section or section[key] is None:
+        return default
+    value = section[key]
+    if not isinstance(value, str):
+        raise ValueError(f"config key '{section_name}.{key}' in {path} must be a string")
+    return value

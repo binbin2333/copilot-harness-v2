@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import shutil
 import stat
 from pathlib import Path
@@ -30,8 +31,8 @@ Then proceed through the phases in order. Read `.github/harness-v2/AGENTS_GUIDE.
 
 ## v3 assumption/evidence rules
 
-Before implementation, classify the task as Level 0-3. For Level 2/3 tasks,
-planning artifacts must include `<!-- harness:v3:start -->` structured blocks
+Before implementation, classify the task as Level 0-3. Every harness workflow
+must include `<!-- harness:v3:start -->` structured blocks
 with `A*` assumptions, `D*` decisions, `E*` evidence, `W*` waivers, and `F*`
 deferred items.
 
@@ -143,7 +144,7 @@ Before writing code, build a map of the existing codebase relevant to the change
 8. External references the user explicitly allowed (SDKs, vendor docs).
 9. Unknowns and risks.
 
-For Level 2/3 tasks, explicitly separate:
+For every harness workflow, explicitly separate:
 - already captured,
 - already stored / owned,
 - already output,
@@ -177,7 +178,7 @@ For "add a new peer" tasks (new agent / provider / platform / plugin), the defau
 
 Out-of-scope items must be listed explicitly.
 
-For Level 2/3 tasks, add a v3 assumption and decision ledger:
+For every harness workflow, add a v3 assumption and decision ledger:
 
 ```markdown
 <!-- harness:v3:start -->
@@ -233,8 +234,8 @@ Describe the implementation approach concretely:
 - Reuse: which existing helpers are reused vs. reimplemented.
 - Alternatives considered and why rejected.
 
-For Level 2/3 tasks, bind design choices to `D*` decisions and `A*`
-assumptions. If implementation planning adds a new assumption, add it in a v3
+Bind design choices to `D*` decisions and `A*` assumptions. If implementation
+planning adds a new assumption, add it in a v3
 structured block rather than hiding it in prose.
 
 When integrating an external library or SDK:
@@ -350,7 +351,7 @@ Register synthesized findings with:
 """,
     "task-classification": """---
 name: task-classification
-description: Classify a task as Level 0-3 so harness-v2 can route lightweight vs full assumption/evidence workflow.
+description: Classify a task as Level 0-3 so harness-v2 can enter the full assumption/evidence workflow.
 ---
 
 # Task Classification
@@ -374,7 +375,7 @@ task_classification:
 <!-- harness:v3:end -->
 ```
 
-Level 2/3 tasks require an assumption ledger, scope freeze, and verification matrix before implementation.
+Every harness workflow requires an assumption ledger, scope freeze, and verification matrix before implementation.
 """,
     "assumption-ledger": """---
 name: assumption-ledger
@@ -536,7 +537,7 @@ non-harness paths until evidence is in place.
 
 ## v3 assumption/evidence gates
 
-For Level 2/3 tasks, planning artifacts must include structured blocks between
+For every active harness workflow, planning artifacts must include structured blocks between
 `<!-- harness:v3:start -->` and `<!-- harness:v3:end -->`. Use stable IDs:
 `A*` assumptions, `D*` decisions, `E*` evidence, `W*` waivers, and `F*`
 deferred items.
@@ -601,6 +602,7 @@ def install(repo: Path) -> list[Path]:
     written: list[Path] = []
     written.append(write_default_config(repo))
     written.extend(_write_runtime(repo))
+    written.extend(_write_runtime_dependencies(repo))
     written.extend(_ensure_runtime_dirs(repo))
     written.extend(_write_bin_scripts(repo))
     written.append(_write_hook_config(repo))
@@ -688,6 +690,22 @@ def _write_runtime(repo: Path) -> list[Path]:
     return written
 
 
+def _write_runtime_dependencies(repo: Path) -> list[Path]:
+    runtime_root = repo / ".github" / "harness-v2" / "runtime"
+    written: list[Path] = []
+    for module_name in ("yaml",):
+        spec = importlib.util.find_spec(module_name)
+        if spec is None or not spec.submodule_search_locations:
+            raise RuntimeError(f"required runtime dependency is unavailable: {module_name}")
+        source = Path(next(iter(spec.submodule_search_locations)))
+        target = runtime_root / module_name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        written.append(target)
+    return written
+
+
 def _write_bin_scripts(repo: Path) -> list[Path]:
     bin_dir = repo / ".github" / "harness-v2" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -699,13 +717,6 @@ def _write_bin_scripts(repo: Path) -> list[Path]:
 
 def _write_skills(repo: Path) -> list[Path]:
     skills_dir = repo / ".github" / "skills"
-    # Remove any skill directories not in the current SKILLS set so stale skills
-    # from previous harness versions don't persist alongside the new ones.
-    if skills_dir.exists():
-        import shutil
-        for existing in skills_dir.iterdir():
-            if existing.is_dir() and existing.name not in SKILLS:
-                shutil.rmtree(existing)
     written: list[Path] = []
     for name, content in SKILLS.items():
         path = skills_dir / name / "SKILL.md"

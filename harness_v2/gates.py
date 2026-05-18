@@ -244,9 +244,8 @@ def _evaluate_v3_implementation_requirements(state: dict, config) -> list[str]:
     classification = state.get("task_classification") or {}
     if not classification:
         return ["task-classification blocks implementation: add task_classification level 0-3 in requirements-summary or task-classification artifact."]
-    level = int(classification.get("level", 0))
-    if level >= 2 and not state.get("assumptions"):
-        return ["A* assumption ledger blocks implementation: Level 2/3 tasks require assumptions before editing implementation files."]
+    if not state.get("assumptions"):
+        return ["A* assumption ledger blocks implementation: every harness workflow requires assumptions before editing implementation files."]
     return []
 
 

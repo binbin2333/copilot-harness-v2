@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Repo-local memory-backed evidence gates for Copilot CLI workflows"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["PyYAML>=6.0.2"]
 
 [project.scripts]
 harness-v2 = "harness_v2.cli:main"

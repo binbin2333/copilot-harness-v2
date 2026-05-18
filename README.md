@@ -79,15 +79,22 @@ Stable IDs:
 
 ## v3 config
 
-Defaults are rollback-safe: v3 gates are disabled and mode is `warn`.
+Defaults are strict for any task that enters the harness workflow: v3 gates are
+enabled and enforced. If a task is too small for the full v3 process, do not
+start a harness workflow for it.
+
+Before implementation, every harness workflow must include task classification
+and an A*/D*/E* assumption/evidence ledger. Completion enforces parse errors,
+unresolved high-risk assumptions, skipped evidence without waivers, invalid
+deferred items, and invalid review verdicts.
 
 ```yaml
 v3:
-  enable_v3_gates: false
-  v3_gate_mode: warn
-  require_assumption_resolution: false
-  require_skip_waivers: false
-  require_task_classification: false
+  enable_v3_gates: true
+  v3_gate_mode: enforce
+  require_assumption_resolution: true
+  require_skip_waivers: true
+  require_task_classification: true
   allow_pass_with_gaps: false
 ```
 

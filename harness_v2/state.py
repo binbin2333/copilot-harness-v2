@@ -577,6 +577,7 @@ def runtime_health(paths: HarnessPaths) -> list[str]:
             "v3_schema.py",
         )
     ]
+    required_files.append(paths.root / "runtime" / "yaml" / "__init__.py")
     required_files.extend(
         [
             paths.root / "hooks" / name

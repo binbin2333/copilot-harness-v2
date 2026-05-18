@@ -234,6 +234,7 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertTrue((repo / ".github" / "harness-v2" / "runtime" / "harness_v2" / "cli.py").exists())
             self.assertTrue((repo / ".github" / "harness-v2" / "runtime" / "harness_v2" / "installer.py").exists())
             self.assertTrue((repo / ".github" / "harness-v2" / "runtime" / "harness_v2" / "memory.py").exists())
+            self.assertTrue((repo / ".github" / "harness-v2" / "runtime" / "yaml" / "__init__.py").exists())
             self.assertTrue((repo / ".github" / "skills" / "context-map" / "SKILL.md").exists())
             guide = (repo / ".github" / "harness-v2" / "AGENTS_GUIDE.md").read_text(encoding="utf-8")
             self.assertIn("git commit", guide)
@@ -246,6 +247,18 @@ class HarnessCoreTests(unittest.TestCase):
             hook_config = json.loads((repo / ".github" / "hooks" / "harness-v2.json").read_text(encoding="utf-8"))
             self.assertIn("permissionRequest", hook_config["hooks"])
             self.assertIsInstance(hook_config["hooks"]["preToolUse"], list)
+
+    def test_installer_preserves_user_owned_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            custom_skill = repo / ".github" / "skills" / "my-custom-skill" / "SKILL.md"
+            custom_skill.parent.mkdir(parents=True, exist_ok=True)
+            custom_skill.write_text("# Custom Skill\n", encoding="utf-8")
+
+            install(repo)
+
+            self.assertTrue(custom_skill.exists())
+            self.assertEqual(custom_skill.read_text(encoding="utf-8"), "# Custom Skill\n")
 
     def test_install_upgrades_existing_config_with_new_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -273,6 +286,8 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertIn("auto_register_artifacts: true", upgraded)
             self.assertIn("fail_fast: false", upgraded)
             self.assertIn("- pytest -q", upgraded)
+            self.assertIn("enable_v3_gates: true", upgraded)
+            self.assertIn("v3_gate_mode: enforce", upgraded)
 
     # --- completion gate tests ---
 
@@ -694,6 +709,28 @@ class HarnessCoreTests(unittest.TestCase):
 
             self.assertEqual(config.verification_commands, ("./build.sh --target x64", "pytest -q"))
 
+    def test_config_verification_commands_are_scoped_to_verification_section(self) -> None:
+        from harness_v2.config import load_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = HarnessPaths(Path(tmp))
+            config_path = paths.repo / ".github" / "harness-v2" / "config.yaml"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                "version: 1\n"
+                "other:\n"
+                "  commands:\n"
+                "    - should-not-be-verification\n"
+                "verification:\n"
+                "  commands:\n"
+                "    - pytest -q\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(paths.repo)
+
+            self.assertEqual(config.verification_commands, ("pytest -q",))
+
     def test_config_rejects_invalid_v3_gate_mode(self) -> None:
         from harness_v2.config import load_config
 
@@ -833,36 +870,22 @@ class HarnessCoreTests(unittest.TestCase):
             self.assertEqual(decision.decision, "deny")
             self.assertTrue(any("A1 blocks completion" in item for item in decision.missing))
 
-    def test_v3_level_two_requires_structured_planning_before_implementation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = HarnessPaths(Path(tmp))
-            start_workflow(paths, "feature", "My task")
-            _configure_verification_commands(paths, enable_v3_gates=True, v3_gate_mode="enforce", require_task_classification=True)
-            _register_artifact(paths, "clarification-memo", "no questions")
-            _register_artifact(paths, "requirements-summary", _v3_classification_block(level=2))
-            _register_artifact(paths, "context-map", "context")
-            _register_artifact(paths, "scope-freeze", "scope without assumptions")
-            _register_artifact(paths, "design", "design")
+    def test_v3_all_levels_require_structured_planning_before_implementation(self) -> None:
+        for level in (1, 2):
+            with self.subTest(level=level), tempfile.TemporaryDirectory() as tmp:
+                paths = HarnessPaths(Path(tmp))
+                start_workflow(paths, "feature", "My task")
+                _configure_verification_commands(paths, enable_v3_gates=True, v3_gate_mode="enforce", require_task_classification=True)
+                _register_artifact(paths, "clarification-memo", "no questions")
+                _register_artifact(paths, "requirements-summary", _v3_classification_block(level=level))
+                _register_artifact(paths, "context-map", "context")
+                _register_artifact(paths, "scope-freeze", "scope without assumptions")
+                _register_artifact(paths, "design", "design")
 
-            decision = evaluate_implementation_gate(paths, [Path("src/app.py")])
+                decision = evaluate_implementation_gate(paths, [Path("src/app.py")])
 
-            self.assertEqual(decision.decision, "deny")
-            self.assertTrue(any("A*" in item or "assumption" in item for item in decision.missing))
-
-    def test_v3_level_one_uses_lightweight_workflow(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = HarnessPaths(Path(tmp))
-            start_workflow(paths, "feature", "My task")
-            _configure_verification_commands(paths, enable_v3_gates=True, v3_gate_mode="enforce", require_task_classification=True)
-            _register_artifact(paths, "clarification-memo", "no questions")
-            _register_artifact(paths, "requirements-summary", _v3_classification_block(level=1))
-            _register_artifact(paths, "context-map", "context")
-            _register_artifact(paths, "scope-freeze", "scope without assumptions")
-            _register_artifact(paths, "design", "design")
-
-            decision = evaluate_implementation_gate(paths, [Path("src/app.py")])
-
-            self.assertEqual(decision.decision, "allow")
+                self.assertEqual(decision.decision, "deny")
+                self.assertTrue(any("A*" in item or "assumption" in item for item in decision.missing))
 
     def test_v3_review_evidence_cannot_prove_high_risk_assumption(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
